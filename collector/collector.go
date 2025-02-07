@@ -12,17 +12,21 @@ import (
 	common "github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/events"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/msgs2"
+	"github.com/richardkiene/cs2analyst/progress"
 	"github.com/richardkiene/cs2analyst/types"
 )
 
 type Collector struct {
-	TickRate     float64
-	TickTime     time.Duration
-	mapNameFound bool
-	Match        *types.Match
-	parser       dem.Parser
-	Logger       slog.Logger
-	PerTickInfo  map[int]map[uint64]PlayerTickData
+	TickRate        float64
+	TickTime        time.Duration
+	totalTicks      int32
+	totalTicksFound bool
+	mapNameFound    bool
+	Match           *types.Match
+	parser          dem.Parser
+	Logger          slog.Logger
+	PerTickInfo     map[int]map[uint64]PlayerTickData
+	progressCreator func(progress.Config) progress.ProgressIndicator
 }
 
 type DamageDealt struct {
@@ -75,13 +79,14 @@ type PlayerTickData struct {
 	DamageDealtToPlayer    map[uint64]DamageDealt
 }
 
-func New() *Collector {
+func New(progressCreator func(progress.Config) progress.ProgressIndicator) *Collector {
 	return &Collector{
-		Match:       NewMatch(),
-		Logger:      *slog.Default(),
-		TickRate:    -1,
-		TickTime:    -1,
-		PerTickInfo: make(map[int]map[uint64]PlayerTickData, 0),
+		Match:           NewMatch(),
+		Logger:          *slog.Default(),
+		TickRate:        -1,
+		TickTime:        -1,
+		PerTickInfo:     make(map[int]map[uint64]PlayerTickData, 0),
+		progressCreator: progressCreator,
 	}
 }
 
@@ -149,7 +154,6 @@ func (c *Collector) Collect(demoPath string) (*types.Match, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	defer f.Close()
 
 	c.parser = dem.NewParser(f)
@@ -157,38 +161,63 @@ func (c *Collector) Collect(demoPath string) (*types.Match, error) {
 
 	c.registerEventHandlers()
 
-	// Parse frames until we handle a ServerInfo event with the map name available
-	// https://github.com/markus-wa/demoinfocs-golang/issues/435#issuecomment-2613140840
+	// Parse until we get the map name
 	for !c.mapNameFound {
 		moreFrames, err := c.parser.ParseNextFrame()
 		if err != nil || !moreFrames {
 			if err == dem.ErrUnexpectedEndOfDemo {
-				return nil, fmt.Errorf("unable to determine map name from demo file")
+				return nil, fmt.Errorf("unable to determine map name")
 			}
 			return nil, fmt.Errorf("error during initial parsing: %v", err)
 		}
 	}
 
-	c.Logger.Info("Map name detected: ", "MapName", c.Match.MapName)
+	c.Logger.Debug("Map name detected:", "MapName", c.Match.MapName)
 
-	c.Logger.Debug("Resuming full parsing...")
+	// Create progress bar for tick counting
+	progress := c.progressCreator(progress.Config{
+		Description: "Processing demo ticks",
+		Total:       -1,
+		ShowBytes:   false,
+		IsCounter:   true,
+	})
 
-	if err := c.parser.ParseToEnd(); err != nil {
-		return nil, fmt.Errorf("error during full parsing: %v", err)
+	lastTick := 0
+	frameCount := 0
+	maxTick := 0
+
+	for {
+		moreFrames, err := c.parser.ParseNextFrame()
+		if err != nil {
+			return nil, fmt.Errorf("error during parsing: %v", err)
+		}
+
+		if !moreFrames {
+			break
+		}
+
+		frameCount++
+
+		currentTick := c.parser.GameState().IngameTick()
+		if currentTick > lastTick {
+			if err := progress.Add(currentTick - lastTick); err != nil {
+				c.Logger.Warn("Failed to update progress bar", "error", err)
+			}
+			lastTick = currentTick
+		}
+		if currentTick > maxTick {
+			maxTick = currentTick
+		}
 	}
 
-	c.Logger.Debug("Finished parsing events", "Events", len(c.Match.Events))
-
-	for steamID, stats := range c.Match.PlayerStats {
-		c.Logger.Debug("Player stats",
-			"name", stats.Name,
-			"steam_id", steamID,
-			"kills", stats.Kills,
-			"deaths", stats.Deaths,
-			"assists", stats.Assists,
-			"total_damage", stats.TotalDamage,
-		)
+	// Ensure progress bar shows completion
+	if err := progress.Finish(); err != nil {
+		c.Logger.Warn("Failed to finish progress bar", "error", err)
 	}
+
+	c.Logger.Info("Demo parsing completed",
+		"totalFrames", frameCount,
+		"totalTicks", maxTick)
 
 	return c.Match, nil
 }

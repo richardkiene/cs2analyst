@@ -4,25 +4,30 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/richardkiene/cs2analyst/analyzer"
 	"github.com/richardkiene/cs2analyst/collector"
+	"github.com/richardkiene/cs2analyst/progress"
 	"github.com/spf13/cobra"
 )
 
 type config struct {
-	demoPath   string
-	playerName string
-	mapsDir    string
-	modelsDir  string
-	logLevel   string
-	output     string
-	outputPath string
-	dbConfig   string
+	demoPath        string
+	playerName      string
+	mapsDir         string
+	modelsDir       string
+	logLevel        string
+	output          string
+	outputPath      string
+	dbConfig        string
+	progressCreator func(progress.Config) progress.ProgressIndicator
 }
 
 func newRootCmd() *cobra.Command {
-	cfg := &config{}
+	cfg := &config{
+		progressCreator: progress.CreateProgressBar,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "cs2democollector",
@@ -76,6 +81,8 @@ func validateConfig(cfg *config) error {
 }
 
 func run(cfg *config) error {
+	startTime := time.Now()
+
 	// Configure logging
 	logLevel := new(slog.LevelVar)
 	if err := logLevel.UnmarshalText([]byte(cfg.logLevel)); err != nil {
@@ -85,12 +92,15 @@ func run(cfg *config) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	// Initialize collector and analyzer
-	c := collector.New()
-	a, analyzerErr := analyzer.New()
+	// Initialize collector and analyzer with progress creator
+	c := collector.New(cfg.progressCreator)
+	a, analyzerErr := analyzer.New(cfg.progressCreator)
 	if analyzerErr != nil {
 		return fmt.Errorf("failed to instantiate analyzer")
 	}
+
+	fmt.Printf("\nStarting demo analysis...\n\n")
+	parseStartTime := time.Now()
 
 	// Process demo file
 	_, err := c.Collect(cfg.demoPath)
@@ -98,15 +108,27 @@ func run(cfg *config) error {
 		return fmt.Errorf("failed to process demo: %w", err)
 	}
 
+	parseDuration := time.Since(parseStartTime)
+	fmt.Printf("\nDemo parsing completed in %v\n", parseDuration)
+
+	fmt.Printf("\nAnalyzing collected data...\n\n")
+	analyzeStartTime := time.Now()
+
 	// Analyze collected data
 	results, err := a.Analyze(c.PerTickInfo, c.TickRate)
 	if err != nil {
 		return fmt.Errorf("failed to analyze data: %w", err)
 	}
 
-	// Output to console for now
+	analyzeDuration := time.Since(analyzeStartTime)
+	totalDuration := time.Since(startTime)
+
+	fmt.Printf("\nAnalysis phase completed in %v\n", analyzeDuration)
+	fmt.Printf("Total execution time: %v\n", totalDuration)
+
+	fmt.Printf("\nResults:\n")
 	for steamID, medianTimeToDamage := range results {
-		logger.Info("Time To Damage Calculated", "steamID", steamID, "TTD", medianTimeToDamage)
+		fmt.Printf("SteamID: %d - Time To Damage: %f", steamID, medianTimeToDamage)
 	}
 
 	return nil
