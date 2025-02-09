@@ -1,10 +1,12 @@
 package types
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/golang/geo/r3"
-	"github.com/markus-wa/demoinfocs-golang/common"
+	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 )
 
 type DamageDealt struct {
@@ -55,6 +57,74 @@ type PlayerTickData struct {
 	CurrentRoundMoneySpent int
 	CurrentMoneySpentTotal int
 	DamageDealtToPlayer    map[uint64]DamageDealt
+}
+
+// ForwardVector computes the direction the player is looking in Source2 coords:
+// (X=forward, Y=left, Z=up). We also fix the pitch range 270..360 => -90..0.
+func (p *PlayerTickData) ForwardVector() r3.Vector {
+	rawYaw := float64(p.ViewAngleX)   // 0..360
+	rawPitch := float64(p.ViewAngleY) // 270..90 => remap >180 => negative
+
+	if rawPitch > 180 {
+		rawPitch -= 360
+	}
+
+	yaw := rawYaw * (math.Pi / 180)
+	pitch := rawPitch * (math.Pi / 180)
+
+	return r3.Vector{
+		X: math.Cos(pitch) * math.Sin(yaw),
+		Y: math.Cos(pitch) * math.Cos(yaw),
+		Z: math.Sin(pitch),
+	}.Normalize()
+}
+
+// IsInFieldOfView returns whether 'target' is within ~120° of the forward vector
+func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {
+	// Define the field-of-view in degrees (half FOV = FOV/2)
+	const FOV_DEGREES = 120.0 // same as before
+	toTarget := target.Sub(eyePos).Normalize()
+	forward := p.ForwardVector() // still computed from p.ViewAngleX/Y
+	dotProduct := forward.Dot(toTarget)
+	angleRadians := math.Acos(dotProduct)
+	angleDegrees := angleRadians * (180 / math.Pi)
+	return angleDegrees <= (FOV_DEGREES / 2)
+}
+
+func (p *PlayerTickData) IsPartiallyVisible(target, eyePos r3.Vector, slackDegrees float64) bool {
+	// Our base FOV remains the same (e.g., 120°)
+	const baseFOV = 120.0
+	// Effective half FOV plus extra slack
+	effectiveThreshold := (baseFOV / 2.0) + slackDegrees
+
+	// Compute the vector from the shooter’s position to the target.
+	// (If you want to use eye position instead, replace p.Position with the computed eyePos.)
+	toTarget := target.Sub(eyePos).Normalize()
+	forward := p.ForwardVector()
+
+	dot := forward.Dot(toTarget)
+	angleDegrees := math.Acos(dot) * (180 / math.Pi)
+
+	return angleDegrees <= effectiveThreshold
+}
+
+func (p PlayerTickData) String() string {
+	var team string
+	if p.PlayerTeam == 2 {
+		team = "Terrorists"
+	} else if p.PlayerTeam == 3 {
+		team = "Counter-Terrorists"
+	} else {
+		team = "Unknown"
+	}
+
+	return fmt.Sprintf(
+		"PlayerTickData{SteamID: %d, Name: %s, Team: %s, Pos: (%.2f, %.2f, %.2f), ViewAngle: (%.2f, %.2f), Alive: %t, Vel2D: %.2f, Vel3D: %.2f}",
+		p.SteamID, p.PlayerName, team,
+		p.Position.X, p.Position.Y, p.Position.Z,
+		p.ViewAngleX, p.ViewAngleY, p.IsAlive,
+		p.Velocity2D, p.Velocity3D,
+	)
 }
 
 type PlayerStats struct {

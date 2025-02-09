@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/golang/geo/r3"
-	"github.com/richardkiene/cs2analyst/collector"
 	"github.com/richardkiene/cs2analyst/types"
 )
 
@@ -106,8 +105,8 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	tick int,
 	mapModel *Model,
 	playerModel *Model,
-	shooter collector.PlayerTickData,
-	target collector.PlayerTickData,
+	shooter types.PlayerTickData,
+	target types.PlayerTickData,
 	fovDegrees float64,
 	extraPadding float64,
 	includeCone bool,

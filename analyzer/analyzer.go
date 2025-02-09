@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/richardkiene/cs2analyst/collector"
+	"github.com/richardkiene/cs2analyst/types"
 	"github.com/richardkiene/cs2analyst/visibility"
 )
 
@@ -32,31 +32,57 @@ func New() (*Analyzer, error) {
 	return a, nil
 }
 
-func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData, tickRate float64, tickTime time.Duration) (map[uint64]float64, error) {
+func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tickRate float64, tickTime time.Duration) (map[uint64]float64, error) {
 	playerTimeToDamage := make(map[uint64][]float64)
 	medianTimeToDamage := make(map[uint64]float64)
 	msPerTick := 1000.0 / tickRate
 
-	// Track the first damage in each engagement
-	processedVisibility := make(map[string]bool)
+	type cachedVisibility struct {
+		startTick int
+		processed bool
+	}
+	visibilityCache := make(map[string]*cachedVisibility)
 
 	for currentTick, playerMap := range tickData {
 		for steamID, player := range playerMap {
 			for targetID, damage := range player.DamageDealtToPlayer {
 				if damage.HealthDamage > 0 {
-					if lastVisibilityTick, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok {
-						visKey := fmt.Sprintf("%d-%d-%d", steamID, targetID, lastVisibilityTick)
-						if !processedVisibility[visKey] {
-							timeDelta := float64(currentTick-lastVisibilityTick) * msPerTick
-							if timeDelta < 1000.0 {
-								// Only log if this is the first hit in an engagement
-								playerTimeToDamage[steamID] = append(playerTimeToDamage[steamID], timeDelta)
-								processedVisibility[visKey] = true
+					key := fmt.Sprintf("%d-%d", steamID, targetID)
+					cached, exists := visibilityCache[key]
 
-								if steamID == 76561197991944713 {
-									fmt.Printf("For shooter %d vs target %d: first visible tick = %d, damage tick = %d, interval = %.2f ms\n",
-										steamID, targetID, lastVisibilityTick, currentTick, timeDelta)
-								}
+					var visibilityStartTick int
+					if exists && !cached.processed {
+						// Verify cached visibility is still valid
+						if result, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok && result.IsValid {
+							if result.StartTick == cached.startTick {
+								visibilityStartTick = cached.startTick
+							} else {
+								delete(visibilityCache, key)
+							}
+						} else {
+							delete(visibilityCache, key)
+						}
+					}
+
+					if !exists || cached.processed {
+						if result, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok && result.IsValid {
+							visibilityCache[key] = &cachedVisibility{
+								startTick: result.StartTick,
+								processed: false,
+							}
+							visibilityStartTick = result.StartTick
+						}
+					}
+
+					if cached, exists := visibilityCache[key]; exists && !cached.processed {
+						timeDelta := float64(currentTick-visibilityStartTick) * msPerTick
+						if timeDelta < 1000.0 {
+							playerTimeToDamage[steamID] = append(playerTimeToDamage[steamID], timeDelta)
+							cached.processed = true
+
+							if steamID == 76561197991944713 {
+								fmt.Printf("For shooter %d vs target %d: first visible tick = %d, damage tick = %d, interval = %.2f ms\n",
+									steamID, targetID, visibilityStartTick, currentTick, timeDelta)
 							}
 						}
 					}
@@ -65,7 +91,6 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData,
 		}
 	}
 
-	// Calculate medians
 	for steamID, timings := range playerTimeToDamage {
 		if len(timings) == 0 {
 			medianTimeToDamage[steamID] = 0

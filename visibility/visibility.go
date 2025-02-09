@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/golang/geo/r3"
-	"github.com/richardkiene/cs2analyst/collector"
 	"github.com/richardkiene/cs2analyst/types"
 )
 
@@ -25,6 +24,11 @@ func New(objDirPath string) *Visibility {
 		objDirPath: objDirPath,
 		logger:     *slog.Default(),
 	}
+}
+
+type VisibilityResult struct {
+	StartTick int
+	IsValid   bool
 }
 
 type Model struct {
@@ -322,16 +326,9 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 	return relevant
 }
 
-// FindLastContinuousVisibilityStart is unchanged from your code
-func (v *Visibility) FindLastContinuousVisibilityStart(
-	playerID, targetID uint64,
-	currentTick int,
-	perTickInfo map[int]map[uint64]collector.PlayerTickData,
-) (int, bool) {
+func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
 	invisibleTicks := 0
 	lastVisibleTick := -1
-	lastInvisibleTick := -1
-	firstVisibleTick := -1
 
 	for tick := currentTick; tick >= 0; tick-- {
 		if currentTick-tick > 320 {
@@ -353,87 +350,21 @@ func (v *Visibility) FindLastContinuousVisibilityStart(
 
 		isVisible := CanSeeTarget(shooterTick, targetTick, v.LosSystem.playerModel, v.LosSystem.mapModel, -1)
 		if isVisible {
-			if lastVisibleTick == -1 {
-				firstVisibleTick = tick
-			}
 			lastVisibleTick = tick
 			invisibleTicks = 0
 		} else {
-			lastInvisibleTick = tick
 			invisibleTicks++
 			if invisibleTicks > 8 && lastVisibleTick != -1 {
-				if lastInvisibleTick != -1 {
-					pd := perTickInfo[lastInvisibleTick]
-					CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, lastInvisibleTick)
-				}
-				if firstVisibleTick != -1 {
-					pd := perTickInfo[firstVisibleTick]
-					CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, firstVisibleTick)
-				}
-				return lastVisibleTick, true
+				return VisibilityResult{StartTick: lastVisibleTick, IsValid: true}, true
 			}
 		}
 	}
 
 	if lastVisibleTick != -1 {
-		if lastInvisibleTick != -1 {
-			pd := perTickInfo[lastInvisibleTick]
-			CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, lastInvisibleTick)
-		}
-		if firstVisibleTick != -1 {
-			pd := perTickInfo[firstVisibleTick]
-			CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, firstVisibleTick)
-		}
+		return VisibilityResult{StartTick: lastVisibleTick, IsValid: true}, true
 	}
-	return lastVisibleTick, lastVisibleTick != -1
+	return VisibilityResult{}, false
 }
-
-// getVisibilityPoints returns points on the player model (head, shoulders, torso)
-/*func getVisibilityPoints(playerModel *Model) []r3.Vector {
-	var points []r3.Vector
-
-	for _, hitbox := range playerModel.hitboxes {
-		center := r3.Vector{
-			X: (hitbox.MinBounds.X + hitbox.MaxBounds.X) / 2,
-			Y: (hitbox.MinBounds.Y + hitbox.MaxBounds.Y) / 2,
-			Z: (hitbox.MinBounds.Z + hitbox.MaxBounds.Z) / 2,
-		}
-
-		// Always include center point
-		points = append(points, center)
-
-		// Add type-specific points
-		switch hitbox.Type {
-		case "Box":
-			// Add front corners for box-type hitboxes
-			points = append(points,
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MaxBounds.Z},
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MaxBounds.Z},
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MinBounds.Z},
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MinBounds.Z},
-			)
-		case "Sphere":
-			// For spheres, add cardinal points
-			radius := (hitbox.MaxBounds.Sub(hitbox.MinBounds)).Norm() / 2
-			points = append(points,
-				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
-				r3.Vector{X: center.X, Y: center.Y + radius, Z: center.Z},
-				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + radius},
-			)
-		case "Capsule":
-			// For capsules, add points along the primary axis
-			height := hitbox.MaxBounds.Z - hitbox.MinBounds.Z
-			radius := (hitbox.MaxBounds.X - hitbox.MinBounds.X) / 2
-			points = append(points,
-				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
-				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + height/4},
-				r3.Vector{X: center.X, Y: center.Y, Z: center.Z - height/4},
-			)
-		}
-	}
-
-	return points
-}*/
 
 func (m *Model) GetVisibilityPoints() []r3.Vector {
 	if m.visibilityPoints != nil {
@@ -482,7 +413,7 @@ func (m *Model) GetVisibilityPoints() []r3.Vector {
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye
 func CanSeeTarget(
-	shooter, target collector.PlayerTickData,
+	shooter, target types.PlayerTickData,
 	playerModel, mapModel *Model,
 	tick int,
 ) bool {
@@ -566,7 +497,7 @@ func CanSeeTarget(
 }
 
 func DebugEyePosConsole(
-	shooter collector.PlayerTickData,
+	shooter types.PlayerTickData,
 	playerModel *Model,
 ) {
 	// 1) Calculate bounding-box height
@@ -594,14 +525,14 @@ func DebugEyePosConsole(
 		eyeHeight, eyePos.X, eyePos.Y, eyePos.Z)
 }
 
-func distanceToShooter(shooter collector.PlayerTickData, point r3.Vector) float64 {
+func distanceToShooter(shooter types.PlayerTickData, point r3.Vector) float64 {
 	dx := point.X - shooter.Position.X
 	dy := point.Y - shooter.Position.Y
 	dz := point.Z - shooter.Position.Z
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
-func isInFOV(shooter collector.PlayerTickData, point r3.Vector, fovDegrees float64) bool {
+func isInFOV(shooter types.PlayerTickData, point r3.Vector, fovDegrees float64) bool {
 	toPoint := point.Sub(shooter.Position).Normalize()
 	forward := shooter.ForwardVector()
 	dot := forward.Dot(toPoint)

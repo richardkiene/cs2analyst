@@ -9,7 +9,6 @@ import (
 
 	"github.com/golang/geo/r3"
 	dem "github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs"
-	common "github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/events"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/msgs2"
 	"github.com/richardkiene/cs2analyst/types"
@@ -22,57 +21,7 @@ type Collector struct {
 	Match        *types.Match
 	parser       dem.Parser
 	Logger       slog.Logger
-	PerTickInfo  map[int]map[uint64]PlayerTickData
-}
-
-type DamageDealt struct {
-	ArmorDamage  int
-	HealthDamage int
-	HitGroup     byte
-}
-
-type PlayerTickData struct {
-	SteamID                uint64
-	PlayerName             string
-	PlayerTeam             common.Team
-	Position               r3.Vector
-	ViewAngleX             float32
-	ViewAngleY             float32
-	IsAlive                bool
-	Velocity2D             float64
-	Velocity3D             float64
-	ActiveWeapon           *common.Equipment
-	AmmoLeft               [32]int
-	EntityID               int
-	FlashedAtTick          int
-	FlashedTimeRemaining   time.Duration
-	Team                   common.Team
-	IsAirborne             bool
-	IsBlinded              bool
-	IsCrouched             bool
-	IsConnected            bool
-	IsBot                  bool
-	IsDefusing             bool
-	IsPlanting             bool
-	IsReloading            bool
-	IsScoped               bool
-	IsUpright              bool
-	IsWalking              bool
-	HasHelmet              bool
-	HasKit                 bool
-	FiredActiveWeapon      bool
-	ArmorRemaining         int
-	Assists                int
-	Deaths                 int
-	Kills                  int
-	Health                 int
-	Armor                  int
-	Damage                 int
-	UtilityDamage          int
-	Money                  int
-	CurrentRoundMoneySpent int
-	CurrentMoneySpentTotal int
-	DamageDealtToPlayer    map[uint64]DamageDealt
+	PerTickInfo  map[int]map[uint64]types.PlayerTickData
 }
 
 func New() *Collector {
@@ -81,7 +30,7 @@ func New() *Collector {
 		Logger:      *slog.Default(),
 		TickRate:    -1,
 		TickTime:    -1,
-		PerTickInfo: make(map[int]map[uint64]PlayerTickData, 0),
+		PerTickInfo: make(map[int]map[uint64]types.PlayerTickData, 0),
 	}
 }
 
@@ -91,74 +40,6 @@ func NewMatch() *types.Match {
 		PlayerStats: make(map[uint64]*types.PlayerStats),
 		Date:        time.Now().Format("1999-12-31"),
 	}
-}
-
-// ForwardVector computes the direction the player is looking in Source2 coords:
-// (X=forward, Y=left, Z=up). We also fix the pitch range 270..360 => -90..0.
-func (p *PlayerTickData) ForwardVector() r3.Vector {
-	rawYaw := float64(p.ViewAngleX)   // 0..360
-	rawPitch := float64(p.ViewAngleY) // 270..90 => remap >180 => negative
-
-	if rawPitch > 180 {
-		rawPitch -= 360
-	}
-
-	yaw := rawYaw * (math.Pi / 180)
-	pitch := rawPitch * (math.Pi / 180)
-
-	return r3.Vector{
-		X: math.Cos(pitch) * math.Sin(yaw),
-		Y: math.Cos(pitch) * math.Cos(yaw),
-		Z: math.Sin(pitch),
-	}.Normalize()
-}
-
-// IsInFieldOfView returns whether 'target' is within ~120° of the forward vector
-func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {
-	// Define the field-of-view in degrees (half FOV = FOV/2)
-	const FOV_DEGREES = 120.0 // same as before
-	toTarget := target.Sub(eyePos).Normalize()
-	forward := p.ForwardVector() // still computed from p.ViewAngleX/Y
-	dotProduct := forward.Dot(toTarget)
-	angleRadians := math.Acos(dotProduct)
-	angleDegrees := angleRadians * (180 / math.Pi)
-	return angleDegrees <= (FOV_DEGREES / 2)
-}
-
-func (p *PlayerTickData) IsPartiallyVisible(target, eyePos r3.Vector, slackDegrees float64) bool {
-	// Our base FOV remains the same (e.g., 120°)
-	const baseFOV = 120.0
-	// Effective half FOV plus extra slack
-	effectiveThreshold := (baseFOV / 2.0) + slackDegrees
-
-	// Compute the vector from the shooter’s position to the target.
-	// (If you want to use eye position instead, replace p.Position with the computed eyePos.)
-	toTarget := target.Sub(eyePos).Normalize()
-	forward := p.ForwardVector()
-
-	dot := forward.Dot(toTarget)
-	angleDegrees := math.Acos(dot) * (180 / math.Pi)
-
-	return angleDegrees <= effectiveThreshold
-}
-
-func (p PlayerTickData) String() string {
-	var team string
-	if p.PlayerTeam == 2 {
-		team = "Terrorists"
-	} else if p.PlayerTeam == 3 {
-		team = "Counter-Terrorists"
-	} else {
-		team = "Unknown"
-	}
-
-	return fmt.Sprintf(
-		"PlayerTickData{SteamID: %d, Name: %s, Team: %s, Pos: (%.2f, %.2f, %.2f), ViewAngle: (%.2f, %.2f), Alive: %t, Vel2D: %.2f, Vel3D: %.2f}",
-		p.SteamID, p.PlayerName, team,
-		p.Position.X, p.Position.Y, p.Position.Z,
-		p.ViewAngleX, p.ViewAngleY, p.IsAlive,
-		p.Velocity2D, p.Velocity3D,
-	)
 }
 
 // Collect runs the entire demo parse
@@ -250,11 +131,11 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 	}
 
 	if c.PerTickInfo[currentTick] == nil {
-		c.PerTickInfo[currentTick] = make(map[uint64]PlayerTickData)
+		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
 	}
 
 	prevTick := currentTick - 1
-	var prevData map[uint64]PlayerTickData
+	var prevData map[uint64]types.PlayerTickData
 	if prevTick >= 0 {
 		prevData = c.PerTickInfo[prevTick]
 	}
@@ -264,7 +145,7 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 			continue
 		}
 
-		var lastPTD PlayerTickData
+		var lastPTD types.PlayerTickData
 		if prevData != nil {
 			if ptd, ok := prevData[player.SteamID64]; ok {
 				lastPTD = ptd
@@ -279,9 +160,9 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 
 		pTick, found := c.PerTickInfo[currentTick][player.SteamID64]
 		if !found {
-			pTick = PlayerTickData{
+			pTick = types.PlayerTickData{
 				SteamID:             player.SteamID64,
-				DamageDealtToPlayer: make(map[uint64]DamageDealt),
+				DamageDealtToPlayer: make(map[uint64]types.DamageDealt),
 			}
 		}
 
@@ -332,7 +213,7 @@ func (c *Collector) handleWeaponFire(e events.WeaponFire) {
 	}
 	currentTick := c.parser.GameState().IngameTick()
 	if _, ok := c.PerTickInfo[currentTick][e.Shooter.SteamID64]; !ok {
-		c.PerTickInfo[currentTick] = make(map[uint64]PlayerTickData)
+		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
 	}
 	shooterData := c.PerTickInfo[currentTick][e.Shooter.SteamID64]
 	shooterData.FiredActiveWeapon = true
@@ -350,20 +231,20 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 	victimID := e.Player.SteamID64
 
 	if _, ok := c.PerTickInfo[currentTick][attackerID]; !ok {
-		c.PerTickInfo[currentTick] = make(map[uint64]PlayerTickData)
+		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
 	}
 	if _, ok := c.PerTickInfo[currentTick][victimID]; !ok {
-		c.PerTickInfo[currentTick] = make(map[uint64]PlayerTickData)
+		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
 	}
 
 	attackerData := c.PerTickInfo[currentTick][attackerID]
 	victimData := c.PerTickInfo[currentTick][victimID]
 
 	if attackerData.DamageDealtToPlayer == nil {
-		attackerData.DamageDealtToPlayer = make(map[uint64]DamageDealt)
+		attackerData.DamageDealtToPlayer = make(map[uint64]types.DamageDealt)
 	}
 
-	dmg := DamageDealt{
+	dmg := types.DamageDealt{
 		ArmorDamage:  e.ArmorDamageTaken,
 		HealthDamage: e.HealthDamageTaken,
 		HitGroup:     byte(e.HitGroup),
