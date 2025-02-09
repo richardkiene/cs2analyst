@@ -114,16 +114,32 @@ func (p *PlayerTickData) ForwardVector() r3.Vector {
 }
 
 // IsInFieldOfView returns whether 'target' is within ~120° of the forward vector
-func (p *PlayerTickData) IsInFieldOfView(target r3.Vector) bool {
-	const FOV_DEGREES = 120.0
-
-	toTarget := target.Sub(p.Position).Normalize()
-	forward := p.ForwardVector()
-	dot := forward.Dot(toTarget)
-	angleRadians := math.Acos(dot)
+func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {
+	// Define the field-of-view in degrees (half FOV = FOV/2)
+	const FOV_DEGREES = 120.0 // same as before
+	toTarget := target.Sub(eyePos).Normalize()
+	forward := p.ForwardVector() // still computed from p.ViewAngleX/Y
+	dotProduct := forward.Dot(toTarget)
+	angleRadians := math.Acos(dotProduct)
 	angleDegrees := angleRadians * (180 / math.Pi)
-
 	return angleDegrees <= (FOV_DEGREES / 2)
+}
+
+func (p *PlayerTickData) IsPartiallyVisible(target, eyePos r3.Vector, slackDegrees float64) bool {
+	// Our base FOV remains the same (e.g., 120°)
+	const baseFOV = 120.0
+	// Effective half FOV plus extra slack
+	effectiveThreshold := (baseFOV / 2.0) + slackDegrees
+
+	// Compute the vector from the shooter’s position to the target.
+	// (If you want to use eye position instead, replace p.Position with the computed eyePos.)
+	toTarget := target.Sub(eyePos).Normalize()
+	forward := p.ForwardVector()
+
+	dot := forward.Dot(toTarget)
+	angleDegrees := math.Acos(dot) * (180 / math.Pi)
+
+	return angleDegrees <= effectiveThreshold
 }
 
 func (p PlayerTickData) String() string {

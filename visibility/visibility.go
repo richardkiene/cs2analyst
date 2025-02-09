@@ -319,27 +319,73 @@ func (v *Visibility) FindLastContinuousVisibilityStart(
 
 // getVisibilityPoints returns points on the player model (head, shoulders, torso)
 func getVisibilityPoints(playerModel *Model) []r3.Vector {
-	width := playerModel.max.Y - playerModel.min.Y
-	depth := playerModel.max.X - playerModel.min.X
-	height := playerModel.max.Z - playerModel.min.Z
+	// Compute the extents from the bounding box.
+	width := playerModel.max.Y - playerModel.min.Y  // left/right extent
+	depth := playerModel.max.X - playerModel.min.X  // forward/back extent
+	height := playerModel.max.Z - playerModel.min.Z // vertical extent
 
-	pts := []r3.Vector{
-		{X: depth * 0.5, Y: 0, Z: height * 0.9},
-		{X: -depth * 0.5, Y: 0, Z: height * 0.9},
-		{X: 0, Y: 0, Z: height * 0.8},
+	// (Optional) Normalize Z by shifting by playerModel.min.Z.
+	// If you want feet exactly at 0, you can define a helper:
+	/*shiftZ := func(v r3.Vector) r3.Vector {
+		return r3.Vector{X: v.X, Y: v.Y, Z: v.Z - playerModel.min.Z}
+	}*/
 
-		{X: depth * 0.3, Y: width * 0.15, Z: height * 0.7},
-		{X: -depth * 0.3, Y: width * 0.15, Z: height * 0.7},
-		{X: depth * 0.3, Y: -width * 0.15, Z: height * 0.7},
-		{X: -depth * 0.3, Y: -width * 0.15, Z: height * 0.7},
+	// For simplicity, we assume that the model has been fixed so that minZ is approximately 0.
+	// Then, relative height (normalized) is: 0.0 = feet, 1.0 = top of head.
 
-		{X: depth * 0.5, Y: 0, Z: height * 0.5},
-		{X: -depth * 0.5, Y: 0, Z: height * 0.5},
+	// --- Feet and Lower Legs ---
+	feetCenter := r3.Vector{X: 0, Y: 0, Z: 0}                           // Center of feet.
+	feetLeft := r3.Vector{X: 0, Y: width * 0.2, Z: 0}                   // A point on the left foot.
+	feetRight := r3.Vector{X: 0, Y: -width * 0.2, Z: 0}                 // A point on the right foot.
+	lowerLegCenter := r3.Vector{X: depth * 0.1, Y: 0, Z: height * 0.25} // Center of lower legs.
+	lowerLegLeft := r3.Vector{X: depth * 0.1, Y: width * 0.2, Z: height * 0.25}
+	lowerLegRight := r3.Vector{X: depth * 0.1, Y: -width * 0.2, Z: height * 0.25}
 
-		{X: depth * 0.3, Y: 0, Z: height * 0.3},
-		{X: -depth * 0.3, Y: 0, Z: height * 0.3},
+	// --- Upper Legs ---
+	upperLegCenter := r3.Vector{X: depth * 0.2, Y: 0, Z: height * 0.4} // Center of upper legs.
+	upperLegLeft := r3.Vector{X: depth * 0.2, Y: width * 0.2, Z: height * 0.4}
+	upperLegRight := r3.Vector{X: depth * 0.2, Y: -width * 0.2, Z: height * 0.4}
+
+	// --- Torso / Chest ---
+	torsoCenter := r3.Vector{X: 0, Y: 0, Z: height * 0.65}
+	torsoFront := r3.Vector{X: depth * 0.5, Y: 0, Z: height * 0.65}
+	torsoLeft := r3.Vector{X: depth * 0.35, Y: width * 0.15, Z: height * 0.65}
+	torsoRight := r3.Vector{X: depth * 0.35, Y: -width * 0.15, Z: height * 0.65}
+
+	// --- Shoulders ---
+	shoulderCenter := r3.Vector{X: 0, Y: 0, Z: height * 0.8}
+	shoulderFrontLeft := r3.Vector{X: depth * 0.3, Y: width * 0.2, Z: height * 0.8}
+	shoulderFrontRight := r3.Vector{X: depth * 0.3, Y: -width * 0.2, Z: height * 0.8}
+
+	// --- Head ---
+	headCenter := r3.Vector{X: 0, Y: 0, Z: height * 0.95}
+	headFront := r3.Vector{X: depth * 0.5, Y: 0, Z: height * 0.9}
+	headBack := r3.Vector{X: -depth * 0.5, Y: 0, Z: height * 0.9}
+
+	// Combine all points. (If needed, you can call shiftZ on each vector if the model isn’t fixed.)
+	points := []r3.Vector{
+		// Feet and lower legs:
+		feetCenter, feetLeft, feetRight,
+		lowerLegCenter, lowerLegLeft, lowerLegRight,
+		// Upper legs:
+		upperLegCenter, upperLegLeft, upperLegRight,
+		// Torso:
+		torsoCenter, torsoFront, torsoLeft, torsoRight,
+		// Shoulders:
+		shoulderCenter, shoulderFrontLeft, shoulderFrontRight,
+		// Head:
+		headCenter, headFront, headBack,
 	}
-	return pts
+
+	// Optionally, if your model isn't fixed so that minZ = 0,
+	// uncomment the following loop to shift every point:
+	/*
+	   for i, pt := range points {
+	       points[i] = shiftZ(pt)
+	   }
+	*/
+
+	return points
 }
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye
@@ -348,23 +394,38 @@ func CanSeeTarget(
 	playerModel, mapModel *Model,
 	tick int,
 ) bool {
-	// eye pos
+	// 1) Compute the shooter’s eye position.
+	// In Source2, shooter.Position is at the feet.
+	// We use 85% of the model’s bounding box height as an approximate eye offset.
 	eyeHeight := playerModel.max.Z * 0.85
 	if shooter.IsCrouched {
 		eyeHeight *= 0.75
 	}
+	// Use the computed eyeHeight so that the eye is above the feet.
 	eyePos := r3.Vector{
 		X: shooter.Position.X,
 		Y: shooter.Position.Y,
 		Z: shooter.Position.Z + eyeHeight,
 	}
 
-	// FOV check
+	// 2) Use a relaxed FOV threshold.
+	// With a base FOV of 120° (half-FOV = 60°), adding 10° slack gives an effective threshold of 70°.
+	effectiveHalfFOV := 70.0
+
+	// 3) Get the candidate visibility points on the target’s model.
 	points := getVisibilityPoints(playerModel)
+
+	// 4) Check if any visibility point is within the relaxed FOV when measured from eyePos.
 	anyInFOV := false
 	for _, bp := range points {
 		wp := target.Position.Add(bp)
-		if shooter.IsInFieldOfView(wp) {
+		// Compute the direction from eyePos to this candidate point.
+		toTarget := wp.Sub(eyePos).Normalize()
+		// Use the shooter’s forward vector (computed from view angles).
+		forward := shooter.ForwardVector()
+		// Compute the angle in degrees.
+		angleDegrees := math.Acos(forward.Dot(toTarget)) * (180.0 / math.Pi)
+		if angleDegrees <= effectiveHalfFOV {
 			anyInFOV = true
 			break
 		}
@@ -373,47 +434,41 @@ func CanSeeTarget(
 		return false
 	}
 
-	// line-of-sight check
+	// 5) For each visibility point that meets the relaxed FOV test, perform a line-of-sight (LOS) test.
 	for _, bp := range points {
 		wp := target.Position.Add(bp)
-		if !shooter.IsInFieldOfView(wp) {
+		// Recompute the angle from eyePos to the candidate point.
+		toTarget := wp.Sub(eyePos).Normalize()
+		forward := shooter.ForwardVector()
+		angleDegrees := math.Acos(forward.Dot(toTarget)) * (180.0 / math.Pi)
+		if angleDegrees > effectiveHalfFOV {
 			continue
 		}
+		// Compute the ray direction from the eye to this point.
 		rayDir := wp.Sub(eyePos).Normalize()
 
-		start := minVector(eyePos, wp).Sub(r3.Vector{X: 200, Y: 200, Z: 200})
-		end := maxVector(eyePos, wp).Add(r3.Vector{X: 200, Y: 200, Z: 200})
-		relevant := mapModel.GetRelevantMapGeometry(start, end)
+		// Define a bounding region for the LOS test (add padding).
+		padding := r3.Vector{X: 200, Y: 200, Z: 200}
+		start := minVector(eyePos, wp).Sub(padding)
+		end := maxVector(eyePos, wp).Add(padding)
+		relevantTriangles := mapModel.GetRelevantMapGeometry(start, end)
 
 		blocked := false
-		for _, tri := range relevant {
+		for _, tri := range relevantTriangles {
 			if rayIntersectsTriangle(eyePos, rayDir, tri) {
 				blocked = true
 				break
 			}
 		}
 		if !blocked {
-			// If we want to create a debug OBJ, do it here
+			// Optionally, if you want to output debug geometry for a specific SteamID and tick:
 			if tick >= 0 && shooter.SteamID == 76561197991944713 {
-				// Debug output for determining if the Z position of the player is reasonable
-				DebugEyePosConsole(shooter, playerModel)
-				// e.g. let's call the "shooterCentric" debug function
-				// Or entire map, or a minimal debug. It's your choice:
-				err := CreateShooterCentricFOVUsingTargetDistance(
-					tick,
-					mapModel, playerModel,
-					shooter, target,
-					120.0, // FOV
-					300.0, // extra padding
-					true,  // include cone
-				)
-				if err != nil {
-					fmt.Println("Error writing debug OBJ:", err)
-				}
+				_ = CreateShooterCentricFOVUsingTargetDistance(tick, mapModel, playerModel, shooter, target, 120.0, 300.0, true)
 			}
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -463,7 +518,7 @@ func isInFOV(shooter collector.PlayerTickData, point r3.Vector, fovDegrees float
 
 // basic ray intersection
 func rayIntersectsTriangle(origin, direction r3.Vector, tri types.Triangle) bool {
-	const EPSILON = 1e-7
+	const EPSILON = 1e-5
 	edge1 := tri.V2.Sub(tri.V1)
 	edge2 := tri.V3.Sub(tri.V1)
 

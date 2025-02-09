@@ -99,7 +99,7 @@ func run(cfg *config) error {
 	}
 
 	// Analyze collected data
-	results, err := a.Analyze(c.PerTickInfo, c.TickRate)
+	results, err := a.Analyze(c.PerTickInfo, c.TickRate, c.TickTime)
 	if err != nil {
 		return fmt.Errorf("failed to analyze data: %w", err)
 	}

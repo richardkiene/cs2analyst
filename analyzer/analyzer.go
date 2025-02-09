@@ -1,8 +1,10 @@
 package analyzer
 
 import (
+	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/richardkiene/cs2analyst/collector"
 	"github.com/richardkiene/cs2analyst/visibility"
@@ -30,7 +32,7 @@ func New() (*Analyzer, error) {
 	return a, nil
 }
 
-func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData, tickRate float64) (map[uint64]float64, error) {
+func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData, tickRate float64, tickTime time.Duration) (map[uint64]float64, error) {
 	playerTimeToDamage := make(map[uint64][]float64)
 	medianTimeToDamage := make(map[uint64]float64)
 	msPerTick := 1000.0 / tickRate
@@ -42,6 +44,11 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData,
 					if lastVisibilityTick, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok {
 						timeDelta := float64(currentTick-lastVisibilityTick) * msPerTick
 						if timeDelta < 1000.0 {
+							if steamID == 76561197991944713 {
+								intervalMs := (currentTick - lastVisibilityTick) * int(tickTime.Milliseconds())
+								fmt.Printf("For shooter %d vs target %d: first visible tick = %d, damage tick = %d, interval = %d ms\n",
+									steamID, targetID, lastVisibilityTick, currentTick, intervalMs)
+							}
 							playerTimeToDamage[steamID] = append(playerTimeToDamage[steamID], timeDelta)
 						}
 					}
