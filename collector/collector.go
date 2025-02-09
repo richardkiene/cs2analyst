@@ -94,22 +94,26 @@ func NewMatch() *types.Match {
 }
 
 func (p *PlayerTickData) ForwardVector() r3.Vector {
-	// Convert degrees to radians
-	yaw := float64(p.ViewAngleX) * (math.Pi / 180)
-	pitch := float64(p.ViewAngleY) * (math.Pi / 180)
+	rawYaw := float64(p.ViewAngleX)   // 0..360
+	rawPitch := float64(p.ViewAngleY) // 270..90
 
-	// Compute the forward vector components
-	forward := r3.Vector{
-		X: math.Cos(pitch) * math.Cos(yaw),
-		Y: math.Cos(pitch) * math.Sin(yaw),
-		Z: -math.Sin(pitch), // Negative because up is usually negative in CS2
+	// Normalize pitch from 270..360 to -90..0
+	if rawPitch > 180 {
+		rawPitch -= 360
 	}
 
-	return forward.Normalize() // Ensure it's a unit vector
+	yaw := rawYaw * (math.Pi / 180)
+	pitch := rawPitch * (math.Pi / 180)
+
+	return r3.Vector{
+		X: math.Cos(pitch) * math.Sin(yaw),
+		Y: math.Cos(pitch) * math.Cos(yaw),
+		Z: math.Sin(pitch),
+	}.Normalize()
 }
 
 func (p *PlayerTickData) IsInFieldOfView(target r3.Vector) bool {
-	const FOV_DEGREES = 90.0 // CS2's typical FOV
+	const FOV_DEGREES = 120.0 // CS2's typical FOV is 90 but we're relaxing it
 
 	toTarget := r3.Vector{
 		X: target.X - p.Position.X,
@@ -375,9 +379,4 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 
 	c.PerTickInfo[currentTick][attackerID] = attackerData
 	c.PerTickInfo[currentTick][victimID] = victimData
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
