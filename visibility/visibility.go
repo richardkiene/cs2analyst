@@ -15,7 +15,7 @@ import (
 )
 
 type Visibility struct {
-	objDirPath string // Directory where the 3d .obj files for geometry can be found
+	objDirPath string
 	LosSystem  LineOfSightSystem
 	logger     slog.Logger
 }
@@ -27,17 +27,13 @@ func New(objDirPath string) *Visibility {
 	}
 }
 
-// Model represents a 3D model loaded from an OBJ file
 type Model struct {
 	triangles []types.Triangle
-	// Bounding information
-	min, max r3.Vector
-	// Spatial partitioning for map geometry
-	sectors  map[string][]types.Triangle
-	gridSize float64
+	min, max  r3.Vector
+	sectors   map[string][]types.Triangle
+	gridSize  float64
 }
 
-// NewModel creates a new model with spatial partitioning initialized
 func NewModel() *Model {
 	return &Model{
 		sectors:  make(map[string][]types.Triangle),
@@ -45,6 +41,11 @@ func NewModel() *Model {
 		min:      r3.Vector{X: 1e10, Y: 1e10, Z: 1e10},
 		max:      r3.Vector{X: -1e10, Y: -1e10, Z: -1e10},
 	}
+}
+
+// TrianglesRaw returns the model's triangle slice
+func (m *Model) TrianglesRaw() []types.Triangle {
+	return m.triangles
 }
 
 type LineOfSightSystem struct {
@@ -57,43 +58,36 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	los := LineOfSightSystem{
 		logger: slog.Default(),
 	}
-
-	mapModel, err := loadMapModel("")
+	mapM, err := loadMapModel("")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create a new LineOfSightSystem: %v", err)
+		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
 	}
-
-	playerModel, err := loadPlayerModel("")
+	playerM, err := loadPlayerModel("")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create a new LineOfSightSystem: %v", err)
+		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
 	}
-
-	los.mapModel = mapModel
-	los.playerModel = playerModel
-
+	los.mapModel = mapM
+	los.playerModel = playerM
 	return &los, nil
-
 }
 
-func loadMapModel(mapModelObjPath string) (*Model, error) {
-	// TODO: mapModelObjPath should be used instead of a hardcoded string
-	mapModel, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\world_output.obj")
+func loadMapModel(path string) (*Model, error) {
+	m, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\world_output.obj")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load map model: %v", err)
+		return nil, fmt.Errorf("failed to load map model: %w", err)
 	}
-	return mapModel, nil
+	return m, nil
 }
 
-func loadPlayerModel(playerModelObjPath string) (*Model, error) {
-	// TODO: playerModelObjPath should be used instead of a hardcoded string
-	playerModel, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\ctm_sas_output.obj")
+func loadPlayerModel(path string) (*Model, error) {
+	p, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\ctm_sas_output.obj")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load player model: %v", err)
+		return nil, fmt.Errorf("failed to load player model: %w", err)
 	}
-	return playerModel, nil
+	return p, nil
 }
 
-// LoadOBJ loads a 3D model from an OBJ file and calculates its bounds
+// LoadOBJ reads an .obj file into a Model
 func LoadOBJ(filename string) (*Model, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -120,10 +114,9 @@ func LoadOBJ(filename string) (*Model, error) {
 			x, _ := strconv.ParseFloat(fields[1], 64)
 			y, _ := strconv.ParseFloat(fields[2], 64)
 			z, _ := strconv.ParseFloat(fields[3], 64)
-			vertex := r3.Vector{X: x, Y: y, Z: z}
-			vertices = append(vertices, vertex)
+			v := r3.Vector{X: x, Y: y, Z: z}
+			vertices = append(vertices, v)
 
-			// Update model bounds
 			model.min.X = math.Min(model.min.X, x)
 			model.min.Y = math.Min(model.min.Y, y)
 			model.min.Z = math.Min(model.min.Z, z)
@@ -139,16 +132,14 @@ func LoadOBJ(filename string) (*Model, error) {
 			v2Idx, _ := strconv.Atoi(strings.Split(fields[2], "/")[0])
 			v3Idx, _ := strconv.Atoi(strings.Split(fields[3], "/")[0])
 
-			triangle := types.Triangle{
+			tri := types.Triangle{
 				V1: vertices[v1Idx-1],
 				V2: vertices[v2Idx-1],
 				V3: vertices[v3Idx-1],
 			}
-			model.triangles = append(model.triangles, triangle)
-
-			// If this is a map model, add to spatial partitioning
+			model.triangles = append(model.triangles, tri)
 			if model.gridSize > 0 {
-				model.addTriangleToSectors(triangle)
+				model.addTriangleToSectors(tri)
 			}
 		}
 	}
@@ -156,88 +147,8 @@ func LoadOBJ(filename string) (*Model, error) {
 	return model, nil
 }
 
-func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]collector.PlayerTickData) (int, bool) {
-	invisibleTicks := 0
-	lastVisibleTick := -1
-	lastInvisibleTick := -1
-	firstVisibleTick := -1 // Track when visibility was first gained
-
-	for tick := currentTick; tick >= 0; tick-- {
-		if currentTick-tick > 320 {
-			break
-		}
-
-		playerData, exists := perTickInfo[tick]
-		if !exists {
-			continue
-		}
-
-		playerTick, exists := playerData[playerID]
-		if !exists || !playerTick.IsAlive || playerTick.IsBlinded {
-			continue
-		}
-
-		targetTick, exists := playerData[targetID]
-		if !exists || !targetTick.IsAlive {
-			continue
-		}
-
-		// Pass -1 for tick to prevent OBJ creation during scanning
-		isVisible := CanSeeTarget(playerData[playerID], playerData[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, -1)
-
-		if isVisible {
-			if lastVisibleTick == -1 { // First moment of visibility
-				firstVisibleTick = tick
-			}
-			lastVisibleTick = tick
-			invisibleTicks = 0
-		} else {
-			lastInvisibleTick = tick
-			invisibleTicks++
-			if invisibleTicks > 8 && lastVisibleTick != -1 {
-				// We've found the visibility boundary - create the OBJ files
-				if lastInvisibleTick != -1 {
-					// Create OBJ for the last invisible moment
-					playerData := perTickInfo[lastInvisibleTick]
-					CanSeeTarget(playerData[playerID], playerData[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, lastInvisibleTick)
-				}
-				if firstVisibleTick != -1 {
-					// Create OBJ for the first visible moment
-					playerData := perTickInfo[firstVisibleTick]
-					CanSeeTarget(playerData[playerID], playerData[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, firstVisibleTick)
-				}
-				return lastVisibleTick, true
-			}
-		}
-	}
-
-	// If we hit the tick limit, still create the OBJ files if we found visibility
-	if lastVisibleTick != -1 {
-		if lastInvisibleTick != -1 {
-			playerData := perTickInfo[lastInvisibleTick]
-			CanSeeTarget(playerData[playerID], playerData[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, lastInvisibleTick)
-		}
-		if firstVisibleTick != -1 {
-			playerData := perTickInfo[firstVisibleTick]
-			CanSeeTarget(playerData[playerID], playerData[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, firstVisibleTick)
-		}
-	}
-
-	return lastVisibleTick, lastVisibleTick != -1
-}
-
-// getSectorKey returns a string key for spatial partitioning
-func (m *Model) getSectorKey(pos r3.Vector) string {
-	// Maintain spatial consistency with Source 2 coordinates
-	x := int(pos.X / m.gridSize) // Forward/East
-	y := int(pos.Y / m.gridSize) // Left/North
-	z := int(pos.Z / m.gridSize) // Up
-	return fmt.Sprintf("%d:%d:%d", x, y, z)
-}
-
-// addTriangleToSectors adds a triangle to relevant spatial sectors
+// addTriangleToSectors populates spatial partitioning for the model
 func (m *Model) addTriangleToSectors(t types.Triangle) {
-	// Get affected sectors based on triangle bounds
 	minX := math.Min(t.V1.X, math.Min(t.V2.X, t.V3.X))
 	maxX := math.Max(t.V1.X, math.Max(t.V2.X, t.V3.X))
 	minY := math.Min(t.V1.Y, math.Min(t.V2.Y, t.V3.Y))
@@ -262,52 +173,42 @@ func (m *Model) addTriangleToSectors(t types.Triangle) {
 	}
 }
 
-// GetRelevantMapGeometry returns map triangles that could intersect with the line of sight
+func (m *Model) getSectorKey(pos r3.Vector) string {
+	x := int(pos.X / m.gridSize)
+	y := int(pos.Y / m.gridSize)
+	z := int(pos.Z / m.gridSize)
+	return fmt.Sprintf("%d:%d:%d", x, y, z)
+}
+
+// GetRelevantMapGeometry returns triangles along the line from start->end
 func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 	visited := make(map[string]bool)
-	var relevantTriangles []types.Triangle
+	var relevant []types.Triangle
 
-	// Calculate direction and length for the line check
-	dir := r3.Vector{
-		X: end.X - start.X,
-		Y: end.Y - start.Y,
-		Z: end.Z - start.Z,
-	}
+	dir := end.Sub(start)
 	length := dir.Norm()
 	steps := int(length/m.gridSize) + 1
 
-	// Use a smaller corridor radius since we're combining approaches
-	const corridorRadius = 1 // Reduced from 3 to 1
-
-	// First, check sectors along the line of sight
+	const corridorRadius = 1
 	for i := 0; i <= steps; i++ {
 		t := float64(i) / float64(steps)
-		pos := r3.Vector{
-			X: start.X + dir.X*t,
-			Y: start.Y + dir.Y*t,
-			Z: start.Z + dir.Z*t,
-		}
-
-		// Check immediate neighboring sectors
+		pos := start.Add(dir.Mul(t))
 		for dx := -corridorRadius; dx <= corridorRadius; dx++ {
 			for dy := -corridorRadius; dy <= corridorRadius; dy++ {
 				for dz := -corridorRadius; dz <= corridorRadius; dz++ {
-					// Skip sectors too far from line of sight
 					if dx*dx+dy*dy+dz*dz > corridorRadius*corridorRadius {
 						continue
 					}
-
 					checkPos := r3.Vector{
 						X: pos.X + float64(dx)*m.gridSize,
 						Y: pos.Y + float64(dy)*m.gridSize,
 						Z: pos.Z + float64(dz)*m.gridSize,
 					}
-
 					key := m.getSectorKey(checkPos)
 					if !visited[key] {
 						visited[key] = true
-						if triangles, exists := m.sectors[key]; exists {
-							relevantTriangles = append(relevantTriangles, triangles...)
+						if triList, ok := m.sectors[key]; ok {
+							relevant = append(relevant, triList...)
 						}
 					}
 				}
@@ -315,28 +216,25 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 		}
 	}
 
-	// Also check the sectors at start and end points with slightly larger radius
+	// check start+end with a bigger radius
 	for _, point := range []r3.Vector{start, end} {
-		const endpointRadius = 2 // Slightly larger radius at endpoints
+		const endpointRadius = 2
 		for dx := -endpointRadius; dx <= endpointRadius; dx++ {
 			for dy := -endpointRadius; dy <= endpointRadius; dy++ {
 				for dz := -endpointRadius; dz <= endpointRadius; dz++ {
-					// Skip sectors too far from point
 					if dx*dx+dy*dy+dz*dz > endpointRadius*endpointRadius {
 						continue
 					}
-
 					checkPos := r3.Vector{
 						X: point.X + float64(dx)*m.gridSize,
 						Y: point.Y + float64(dy)*m.gridSize,
 						Z: point.Z + float64(dz)*m.gridSize,
 					}
-
 					key := m.getSectorKey(checkPos)
 					if !visited[key] {
 						visited[key] = true
-						if triangles, exists := m.sectors[key]; exists {
-							relevantTriangles = append(relevantTriangles, triangles...)
+						if triList, ok := m.sectors[key]; ok {
+							relevant = append(relevant, triList...)
 						}
 					}
 				}
@@ -347,161 +245,249 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 	slog.Debug("GetRelevantMapGeometry",
 		"startPos", start,
 		"endPos", end,
-		"sectorsChecked", len(visited),
-		"trianglesFound", len(relevantTriangles),
-		"gridSize", m.gridSize,
-		"steps", steps)
-
-	return relevantTriangles
+		"sectorsVisited", len(visited),
+		"trianglesFound", len(relevant),
+	)
+	return relevant
 }
 
-/*
- * getVisibilityPoints returns key points to check for visibility based on the player model
- *
- * TODO: Currently this applies modifiers to the model width. This is due to our obj file
- * used to generate the model coordinates being in T stance with arms extended. We should
- * find a way to manipulate either the model before obj output or the direct coordinates
- * here so that the player model is in the correc stance and does not need this.
- */
-func getVisibilityPoints(playerModel *Model) []r3.Vector {
-	// Get model dimensions
-	width := playerModel.max.Y - playerModel.min.Y  // Width is now along Y axis (left/right)
-	depth := playerModel.max.X - playerModel.min.X  // Depth is now along X axis (forward/back)
-	height := playerModel.max.Z - playerModel.min.Z // Height remains on Z axis
+// FindLastContinuousVisibilityStart is unchanged from your code
+func (v *Visibility) FindLastContinuousVisibilityStart(
+	playerID, targetID uint64,
+	currentTick int,
+	perTickInfo map[int]map[uint64]collector.PlayerTickData,
+) (int, bool) {
+	invisibleTicks := 0
+	lastVisibleTick := -1
+	lastInvisibleTick := -1
+	firstVisibleTick := -1
 
-	// Points for Source 2 coordinate system
-	points := []r3.Vector{
-		// Head area (multiple points with depth)
-		{X: depth * 0.5, Y: 0, Z: height * 0.9},  // Front of head
-		{X: -depth * 0.5, Y: 0, Z: height * 0.9}, // Back of head
-		{X: 0, Y: 0, Z: height * 0.8},            // Head center
+	for tick := currentTick; tick >= 0; tick-- {
+		if currentTick-tick > 320 {
+			break
+		}
 
-		// Upper body with reduced width
-		{X: depth * 0.3, Y: width * 0.15, Z: height * 0.7},   // Right shoulder front
-		{X: -depth * 0.3, Y: width * 0.15, Z: height * 0.7},  // Right shoulder back
-		{X: depth * 0.3, Y: -width * 0.15, Z: height * 0.7},  // Left shoulder front
-		{X: -depth * 0.3, Y: -width * 0.15, Z: height * 0.7}, // Left shoulder back
+		playerData, ok := perTickInfo[tick]
+		if !ok {
+			continue
+		}
+		shooterTick, ok := playerData[playerID]
+		if !ok || !shooterTick.IsAlive || shooterTick.IsBlinded {
+			continue
+		}
+		targetTick, ok := playerData[targetID]
+		if !ok || !targetTick.IsAlive {
+			continue
+		}
 
-		// Center mass with depth variations
-		{X: depth * 0.5, Y: 0, Z: height * 0.5},  // Front center
-		{X: -depth * 0.5, Y: 0, Z: height * 0.5}, // Back center
-
-		// Lower body
-		{X: depth * 0.3, Y: 0, Z: height * 0.3},  // Lower torso front
-		{X: -depth * 0.3, Y: 0, Z: height * 0.3}, // Lower torso back
+		isVisible := CanSeeTarget(shooterTick, targetTick, v.LosSystem.playerModel, v.LosSystem.mapModel, -1)
+		if isVisible {
+			if lastVisibleTick == -1 {
+				firstVisibleTick = tick
+			}
+			lastVisibleTick = tick
+			invisibleTicks = 0
+		} else {
+			lastInvisibleTick = tick
+			invisibleTicks++
+			if invisibleTicks > 8 && lastVisibleTick != -1 {
+				if lastInvisibleTick != -1 {
+					pd := perTickInfo[lastInvisibleTick]
+					CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, lastInvisibleTick)
+				}
+				if firstVisibleTick != -1 {
+					pd := perTickInfo[firstVisibleTick]
+					CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, firstVisibleTick)
+				}
+				return lastVisibleTick, true
+			}
+		}
 	}
 
-	return points
+	if lastVisibleTick != -1 {
+		if lastInvisibleTick != -1 {
+			pd := perTickInfo[lastInvisibleTick]
+			CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, lastInvisibleTick)
+		}
+		if firstVisibleTick != -1 {
+			pd := perTickInfo[firstVisibleTick]
+			CanSeeTarget(pd[playerID], pd[targetID], v.LosSystem.playerModel, v.LosSystem.mapModel, firstVisibleTick)
+		}
+	}
+	return lastVisibleTick, lastVisibleTick != -1
 }
 
-// CanSeeTarget determines if a player can see a target using view angles and models
-func CanSeeTarget(shooter, target collector.PlayerTickData, playerModel, mapModel *Model, tick int) bool {
+// getVisibilityPoints returns points on the player model (head, shoulders, torso)
+func getVisibilityPoints(playerModel *Model) []r3.Vector {
+	width := playerModel.max.Y - playerModel.min.Y
+	depth := playerModel.max.X - playerModel.min.X
+	height := playerModel.max.Z - playerModel.min.Z
+
+	pts := []r3.Vector{
+		{X: depth * 0.5, Y: 0, Z: height * 0.9},
+		{X: -depth * 0.5, Y: 0, Z: height * 0.9},
+		{X: 0, Y: 0, Z: height * 0.8},
+
+		{X: depth * 0.3, Y: width * 0.15, Z: height * 0.7},
+		{X: -depth * 0.3, Y: width * 0.15, Z: height * 0.7},
+		{X: depth * 0.3, Y: -width * 0.15, Z: height * 0.7},
+		{X: -depth * 0.3, Y: -width * 0.15, Z: height * 0.7},
+
+		{X: depth * 0.5, Y: 0, Z: height * 0.5},
+		{X: -depth * 0.5, Y: 0, Z: height * 0.5},
+
+		{X: depth * 0.3, Y: 0, Z: height * 0.3},
+		{X: -depth * 0.3, Y: 0, Z: height * 0.3},
+	}
+	return pts
+}
+
+// CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye
+func CanSeeTarget(
+	shooter, target collector.PlayerTickData,
+	playerModel, mapModel *Model,
+	tick int,
+) bool {
+	// eye pos
 	eyeHeight := playerModel.max.Z * 0.85
 	if shooter.IsCrouched {
 		eyeHeight *= 0.75
 	}
-
 	eyePos := r3.Vector{
 		X: shooter.Position.X,
-		Y: shooter.Position.Y - 2.5,
+		Y: shooter.Position.Y,
 		Z: shooter.Position.Z + eyeHeight,
 	}
 
+	// FOV check
 	points := getVisibilityPoints(playerModel)
-
-	// First check if any point is in FOV
-	anyPointInFOV := false
-	for _, basePoint := range points {
-		worldPoint := r3.Vector{
-			X: target.Position.X + basePoint.X,
-			Y: target.Position.Y + basePoint.Y,
-			Z: target.Position.Z + basePoint.Z,
-		}
-
-		if shooter.IsInFieldOfView(worldPoint) {
-			anyPointInFOV = true
+	anyInFOV := false
+	for _, bp := range points {
+		wp := target.Position.Add(bp)
+		if shooter.IsInFieldOfView(wp) {
+			anyInFOV = true
 			break
 		}
 	}
-
-	if !anyPointInFOV {
+	if !anyInFOV {
 		return false
 	}
 
-	// Now check line-of-sight for all points
-	for _, basePoint := range points {
-		worldPoint := r3.Vector{
-			X: target.Position.X + basePoint.X,
-			Y: target.Position.Y + basePoint.Y,
-			Z: target.Position.Z + basePoint.Z,
-		}
-
-		if !shooter.IsInFieldOfView(worldPoint) {
+	// line-of-sight check
+	for _, bp := range points {
+		wp := target.Position.Add(bp)
+		if !shooter.IsInFieldOfView(wp) {
 			continue
 		}
+		rayDir := wp.Sub(eyePos).Normalize()
 
-		// Ray from eyePos to the specific point on target
-		rayDir := worldPoint.Sub(eyePos).Normalize()
-
-		start := minVector(eyePos, worldPoint).Sub(r3.Vector{X: 200, Y: 200, Z: 200})
-		end := maxVector(eyePos, worldPoint).Add(r3.Vector{X: 200, Y: 200, Z: 200})
-
-		// For collision, we still only need relevant triangles
-		relevantTriangles := mapModel.GetRelevantMapGeometry(start, end)
+		start := minVector(eyePos, wp).Sub(r3.Vector{X: 200, Y: 200, Z: 200})
+		end := maxVector(eyePos, wp).Add(r3.Vector{X: 200, Y: 200, Z: 200})
+		relevant := mapModel.GetRelevantMapGeometry(start, end)
 
 		blocked := false
-		for _, tri := range relevantTriangles {
+		for _, tri := range relevant {
 			if rayIntersectsTriangle(eyePos, rayDir, tri) {
 				blocked = true
 				break
 			}
 		}
-
 		if !blocked {
-			// We found a point that’s visible => can see target
-			// Create a debug OBJ for SteamID 76561197991944713
+			// If we want to create a debug OBJ, do it here
 			if tick >= 0 && shooter.SteamID == 76561197991944713 {
-				/*_ = CreateFullDebugOBJ(
-					tick,
-					mapModel,    // entire map
-					playerModel, // the player model
-					shooter,
-					target,
-					false, // set to true if you *do* want a cone
-				)*/
-
-				/*err := CreateShooterFOVOBJ(
-					tick,
-					mapModel,
-					playerModel,
-					shooter,
-					target,
-					120.0, // e.g. 90 deg FOV
-					false, // don't include a big cone
-				)
-				if err != nil {
-					fmt.Println("Failed to write FOV debug:", err)
-				}*/
-
+				// Debug output for determining if the Z position of the player is reasonable
+				DebugEyePosConsole(shooter, playerModel)
+				// e.g. let's call the "shooterCentric" debug function
+				// Or entire map, or a minimal debug. It's your choice:
 				err := CreateShooterCentricFOVUsingTargetDistance(
 					tick,
-					mapModel,
-					playerModel,
-					shooter,
-					target,
-					120.0, // e.g. 90 deg FOV
-					300.0, // Pad the context by 300
-					true,  // include a big cone
+					mapModel, playerModel,
+					shooter, target,
+					120.0, // FOV
+					300.0, // extra padding
+					true,  // include cone
 				)
 				if err != nil {
-					fmt.Println("Failed to write FOV debug:", err)
+					fmt.Println("Error writing debug OBJ:", err)
 				}
 			}
 			return true
 		}
 	}
+	return false
+}
 
-	return false // none of the points were unblocked
+func DebugEyePosConsole(
+	shooter collector.PlayerTickData,
+	playerModel *Model,
+) {
+	// 1) Calculate bounding-box height
+	height := playerModel.max.Z - playerModel.min.Z
+
+	// 2) Our existing "eyeHeight" logic
+	eyeHeight := height * 0.85
+	if shooter.IsCrouched {
+		eyeHeight *= 0.75
+	}
+
+	// 3) Final eye pos
+	eyePos := r3.Vector{
+		X: shooter.Position.X,
+		Y: shooter.Position.Y,
+		Z: shooter.Position.Z + eyeHeight,
+	}
+
+	fmt.Printf("\n=== DebugEyePosConsole ===\n")
+	fmt.Printf("Player minZ=%.2f, maxZ=%.2f => boundingBoxHeight=%.2f\n",
+		playerModel.min.Z, playerModel.max.Z, height)
+	fmt.Printf("shooter feet= (%.2f, %.2f, %.2f)\n",
+		shooter.Position.X, shooter.Position.Y, shooter.Position.Z)
+	fmt.Printf("eyeHeight= %.2f => eyePos= (%.2f, %.2f, %.2f)\n\n",
+		eyeHeight, eyePos.X, eyePos.Y, eyePos.Z)
+}
+
+func distanceToShooter(shooter collector.PlayerTickData, point r3.Vector) float64 {
+	dx := point.X - shooter.Position.X
+	dy := point.Y - shooter.Position.Y
+	dz := point.Z - shooter.Position.Z
+	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+}
+
+func isInFOV(shooter collector.PlayerTickData, point r3.Vector, fovDegrees float64) bool {
+	toPoint := point.Sub(shooter.Position).Normalize()
+	forward := shooter.ForwardVector()
+	dot := forward.Dot(toPoint)
+	angle := math.Acos(dot) * (180 / math.Pi)
+	return angle <= fovDegrees/2
+}
+
+// basic ray intersection
+func rayIntersectsTriangle(origin, direction r3.Vector, tri types.Triangle) bool {
+	const EPSILON = 1e-7
+	edge1 := tri.V2.Sub(tri.V1)
+	edge2 := tri.V3.Sub(tri.V1)
+
+	h := direction.Cross(edge2)
+	a := edge1.Dot(h)
+	if a > -EPSILON && a < EPSILON {
+		return false
+	}
+
+	f := 1.0 / a
+	s := origin.Sub(tri.V1)
+	u := f * s.Dot(h)
+	if u < 0.0 || u > 1.0 {
+		return false
+	}
+
+	q := s.Cross(edge1)
+	v := f * direction.Dot(q)
+	if v < 0.0 || (u+v) > 1.0 {
+		return false
+	}
+
+	dist := f * edge2.Dot(q)
+	return dist > EPSILON
 }
 
 func minVector(a, b r3.Vector) r3.Vector {
@@ -518,57 +504,4 @@ func maxVector(a, b r3.Vector) r3.Vector {
 		Y: math.Max(a.Y, b.Y),
 		Z: math.Max(a.Z, b.Z),
 	}
-}
-
-// rayIntersectsTriangle determines if a ray intersects with a triangle
-func rayIntersectsTriangle(origin, direction r3.Vector, triangle types.Triangle) bool {
-	const EPSILON = 0.0000001
-
-	edge1 := r3.Vector{
-		X: triangle.V2.X - triangle.V1.X,
-		Y: triangle.V2.Y - triangle.V1.Y,
-		Z: triangle.V2.Z - triangle.V1.Z,
-	}
-	edge2 := r3.Vector{
-		X: triangle.V3.X - triangle.V1.X,
-		Y: triangle.V3.Y - triangle.V1.Y,
-		Z: triangle.V3.Z - triangle.V1.Z,
-	}
-
-	h := r3.Vector{
-		X: direction.Y*edge2.Z - direction.Z*edge2.Y,
-		Y: direction.Z*edge2.X - direction.X*edge2.Z,
-		Z: direction.X*edge2.Y - direction.Y*edge2.X,
-	}
-
-	a := edge1.X*h.X + edge1.Y*h.Y + edge1.Z*h.Z
-	if a > -EPSILON && a < EPSILON {
-		return false
-	}
-
-	f := 1.0 / a
-	s := r3.Vector{
-		X: origin.X - triangle.V1.X,
-		Y: origin.Y - triangle.V1.Y,
-		Z: origin.Z - triangle.V1.Z,
-	}
-
-	u := f * (s.X*h.X + s.Y*h.Y + s.Z*h.Z)
-	if u < 0.0 || u > 1.0 {
-		return false
-	}
-
-	q := r3.Vector{
-		X: s.Y*edge1.Z - s.Z*edge1.Y,
-		Y: s.Z*edge1.X - s.X*edge1.Z,
-		Z: s.X*edge1.Y - s.Y*edge1.X,
-	}
-
-	v := f * (direction.X*q.X + direction.Y*q.Y + direction.Z*q.Z)
-	if v < 0.0 || u+v > 1.0 {
-		return false
-	}
-
-	t := f * (edge2.X*q.X + edge2.Y*q.Y + edge2.Z*q.Z)
-	return t > EPSILON
 }

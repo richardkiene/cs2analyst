@@ -93,11 +93,12 @@ func NewMatch() *types.Match {
 	}
 }
 
+// ForwardVector computes the direction the player is looking in Source2 coords:
+// (X=forward, Y=left, Z=up). We also fix the pitch range 270..360 => -90..0.
 func (p *PlayerTickData) ForwardVector() r3.Vector {
 	rawYaw := float64(p.ViewAngleX)   // 0..360
-	rawPitch := float64(p.ViewAngleY) // 270..90
+	rawPitch := float64(p.ViewAngleY) // 270..90 => remap >180 => negative
 
-	// Normalize pitch from 270..360 to -90..0
 	if rawPitch > 180 {
 		rawPitch -= 360
 	}
@@ -112,26 +113,21 @@ func (p *PlayerTickData) ForwardVector() r3.Vector {
 	}.Normalize()
 }
 
+// IsInFieldOfView returns whether 'target' is within ~120° of the forward vector
 func (p *PlayerTickData) IsInFieldOfView(target r3.Vector) bool {
-	const FOV_DEGREES = 120.0 // CS2's typical FOV is 90 but we're relaxing it
+	const FOV_DEGREES = 120.0
 
-	toTarget := r3.Vector{
-		X: target.X - p.Position.X,
-		Y: target.Y - p.Position.Y,
-		Z: target.Z - p.Position.Z,
-	}.Normalize()
-
+	toTarget := target.Sub(p.Position).Normalize()
 	forward := p.ForwardVector()
-	dotProduct := forward.X*toTarget.X + forward.Y*toTarget.Y + forward.Z*toTarget.Z
-	angleRadians := math.Acos(dotProduct)
+	dot := forward.Dot(toTarget)
+	angleRadians := math.Acos(dot)
 	angleDegrees := angleRadians * (180 / math.Pi)
 
-	return angleDegrees <= FOV_DEGREES/2
+	return angleDegrees <= (FOV_DEGREES / 2)
 }
 
 func (p PlayerTickData) String() string {
 	var team string
-
 	if p.PlayerTeam == 2 {
 		team = "Terrorists"
 	} else if p.PlayerTeam == 3 {
@@ -140,7 +136,8 @@ func (p PlayerTickData) String() string {
 		team = "Unknown"
 	}
 
-	return fmt.Sprintf("PlayerTickData{SteamID: %d, Name: %s, Team: %s, Pos: (%.2f, %.2f, %.2f), ViewAngle: (%.2f, %.2f), Alive: %t, Vel2D: %.2f, Vel3D: %.2f}",
+	return fmt.Sprintf(
+		"PlayerTickData{SteamID: %d, Name: %s, Team: %s, Pos: (%.2f, %.2f, %.2f), ViewAngle: (%.2f, %.2f), Alive: %t, Vel2D: %.2f, Vel3D: %.2f}",
 		p.SteamID, p.PlayerName, team,
 		p.Position.X, p.Position.Y, p.Position.Z,
 		p.ViewAngleX, p.ViewAngleY, p.IsAlive,
@@ -148,12 +145,12 @@ func (p PlayerTickData) String() string {
 	)
 }
 
+// Collect runs the entire demo parse
 func (c *Collector) Collect(demoPath string) (*types.Match, error) {
 	f, err := os.Open(demoPath)
 	if err != nil {
 		return nil, err
 	}
-
 	defer f.Close()
 
 	c.parser = dem.NewParser(f)
@@ -161,28 +158,25 @@ func (c *Collector) Collect(demoPath string) (*types.Match, error) {
 
 	c.registerEventHandlers()
 
-	// Parse frames until we handle a ServerInfo event with the map name available
-	// https://github.com/markus-wa/demoinfocs-golang/issues/435#issuecomment-2613140840
+	// parse until we detect map name
 	for !c.mapNameFound {
 		moreFrames, err := c.parser.ParseNextFrame()
 		if err != nil || !moreFrames {
 			if err == dem.ErrUnexpectedEndOfDemo {
-				return nil, fmt.Errorf("unable to determine map name from demo file")
+				return nil, fmt.Errorf("unable to determine map name")
 			}
 			return nil, fmt.Errorf("error during initial parsing: %v", err)
 		}
 	}
-
 	c.Logger.Info("Map name detected: ", "MapName", c.Match.MapName)
 
 	c.Logger.Debug("Resuming full parsing...")
 
 	if err := c.parser.ParseToEnd(); err != nil {
-		return nil, fmt.Errorf("error during full parsing: %v", err)
+		return nil, fmt.Errorf("error parsing to end: %v", err)
 	}
 
 	c.Logger.Debug("Finished parsing events", "Events", len(c.Match.Events))
-
 	for steamID, stats := range c.Match.PlayerStats {
 		c.Logger.Debug("Player stats",
 			"name", stats.Name,
@@ -206,19 +200,14 @@ func (c *Collector) registerEventHandlers() {
 
 func (c *Collector) calculateVelocity3D(currentPos, lastPos r3.Vector) float64 {
 	timeDelta := float64(c.TickTime.Milliseconds())
-
-	displacement := currentPos.Sub(lastPos)
-	return math.Sqrt(displacement.X*displacement.X+
-		displacement.Y*displacement.Y+
-		displacement.Z*displacement.Z) / timeDelta
+	disp := currentPos.Sub(lastPos)
+	return disp.Norm() / timeDelta
 }
 
 func (c *Collector) calculateVelocity2D(currentPos, lastPos r3.Vector) float64 {
 	timeDelta := float64(c.TickTime.Milliseconds())
-
-	displacement := currentPos.Sub(lastPos)
-	return math.Sqrt(displacement.X*displacement.X+
-		displacement.Y*displacement.Y) / timeDelta
+	disp := currentPos.Sub(lastPos)
+	return math.Sqrt(disp.X*disp.X+disp.Y*disp.Y) / timeDelta
 }
 
 func (c *Collector) handleServerInfo(msg *msgs2.CSVCMsg_ServerInfo) {
@@ -234,15 +223,12 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 	if c.TickRate == -1 {
 		c.TickRate = c.parser.TickRate()
 		c.TickTime = c.parser.TickTime()
-
 		c.Logger.Debug("Server Tickrate", "tickRate", c.TickRate)
 		c.Logger.Debug("Tick time", "tickTime", c.TickTime)
 	}
 
 	gs := c.parser.GameState()
 	currentTick := gs.IngameTick()
-
-	// At the beginning of the demo, IngameTick can be invalid
 	if currentTick < 0 {
 		return
 	}
@@ -252,9 +238,9 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 	}
 
 	prevTick := currentTick - 1
-	var previousTickMap map[uint64]PlayerTickData
+	var prevData map[uint64]PlayerTickData
 	if prevTick >= 0 {
-		previousTickMap = c.PerTickInfo[prevTick]
+		prevData = c.PerTickInfo[prevTick]
 	}
 
 	for _, player := range gs.Participants().Playing() {
@@ -262,68 +248,65 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 			continue
 		}
 
-		var lastPlayerTick PlayerTickData
-		if previousTickMap != nil {
-			if ptd, ok := previousTickMap[player.SteamID64]; ok {
-				lastPlayerTick = ptd
+		var lastPTD PlayerTickData
+		if prevData != nil {
+			if ptd, ok := prevData[player.SteamID64]; ok {
+				lastPTD = ptd
 			}
 		}
 
-		var velocity2D, velocity3D float64
-
-		// We only want to calculate the velocity of a player if they are alive
+		var vel2D, vel3D float64
 		if player.IsAlive() {
-			velocity2D = c.calculateVelocity2D(player.Position(), lastPlayerTick.Position)
-			velocity3D = c.calculateVelocity3D(player.Position(), lastPlayerTick.Position)
+			vel2D = c.calculateVelocity2D(player.Position(), lastPTD.Position)
+			vel3D = c.calculateVelocity3D(player.Position(), lastPTD.Position)
 		}
 
-		playerTick, found := c.PerTickInfo[currentTick][player.SteamID64]
+		pTick, found := c.PerTickInfo[currentTick][player.SteamID64]
 		if !found {
-			// Only create a new struct if this is the first time we see this player on this tick
-			playerTick = PlayerTickData{
+			pTick = PlayerTickData{
 				SteamID:             player.SteamID64,
 				DamageDealtToPlayer: make(map[uint64]DamageDealt),
 			}
 		}
 
-		playerTick.SteamID = player.SteamID64
-		playerTick.PlayerTeam = player.Team
-		playerTick.PlayerName = player.Name
-		playerTick.Position = player.Position()
-		playerTick.ViewAngleX = player.ViewDirectionX()
-		playerTick.ViewAngleY = player.ViewDirectionY()
-		playerTick.IsAlive = player.IsAlive()
-		playerTick.Velocity2D = velocity2D
-		playerTick.Velocity3D = velocity3D
-		playerTick.ActiveWeapon = player.ActiveWeapon()
-		playerTick.AmmoLeft = player.AmmoLeft
-		playerTick.EntityID = player.Entity.ID()
-		playerTick.FlashedAtTick = player.FlashTick
-		playerTick.FlashedTimeRemaining = player.FlashDurationTimeRemaining()
-		playerTick.Team = player.Team
-		playerTick.IsConnected = player.IsConnected
-		playerTick.IsAirborne = player.IsAirborne()
-		playerTick.IsBlinded = player.IsBlinded()
-		playerTick.IsBot = player.IsBot
-		playerTick.IsCrouched = player.IsDucking()
-		playerTick.IsDefusing = player.IsDefusing
-		playerTick.IsPlanting = player.IsPlanting
-		playerTick.IsReloading = player.IsReloading
-		playerTick.IsScoped = player.IsScoped()
-		playerTick.IsUpright = player.IsStanding()
-		playerTick.IsWalking = player.IsWalking()
-		playerTick.Assists = player.Assists()
-		playerTick.Deaths = player.Deaths()
-		playerTick.Kills = player.Kills()
-		playerTick.Damage = player.TotalDamage()
-		playerTick.Health = player.Health()
-		playerTick.Armor = player.Armor()
-		playerTick.UtilityDamage = player.UtilityDamage()
-		playerTick.Money = player.Money()
-		playerTick.CurrentRoundMoneySpent = player.MoneySpentThisRound()
-		playerTick.CurrentMoneySpentTotal = player.MoneySpentTotal()
+		pTick.SteamID = player.SteamID64
+		pTick.PlayerTeam = player.Team
+		pTick.PlayerName = player.Name
+		pTick.Position = player.Position()
+		pTick.ViewAngleX = player.ViewDirectionX()
+		pTick.ViewAngleY = player.ViewDirectionY()
+		pTick.IsAlive = player.IsAlive()
+		pTick.Velocity2D = vel2D
+		pTick.Velocity3D = vel3D
+		pTick.ActiveWeapon = player.ActiveWeapon()
+		pTick.AmmoLeft = player.AmmoLeft
+		pTick.EntityID = player.Entity.ID()
+		pTick.FlashedAtTick = player.FlashTick
+		pTick.FlashedTimeRemaining = player.FlashDurationTimeRemaining()
+		pTick.Team = player.Team
+		pTick.IsConnected = player.IsConnected
+		pTick.IsAirborne = player.IsAirborne()
+		pTick.IsBlinded = player.IsBlinded()
+		pTick.IsBot = player.IsBot
+		pTick.IsCrouched = player.IsDucking()
+		pTick.IsDefusing = player.IsDefusing
+		pTick.IsPlanting = player.IsPlanting
+		pTick.IsReloading = player.IsReloading
+		pTick.IsScoped = player.IsScoped()
+		pTick.IsUpright = player.IsStanding()
+		pTick.IsWalking = player.IsWalking()
+		pTick.Assists = player.Assists()
+		pTick.Deaths = player.Deaths()
+		pTick.Kills = player.Kills()
+		pTick.Damage = player.TotalDamage()
+		pTick.Health = player.Health()
+		pTick.Armor = player.Armor()
+		pTick.UtilityDamage = player.UtilityDamage()
+		pTick.Money = player.Money()
+		pTick.CurrentRoundMoneySpent = player.MoneySpentThisRound()
+		pTick.CurrentMoneySpentTotal = player.MoneySpentTotal()
 
-		c.PerTickInfo[currentTick][player.SteamID64] = playerTick
+		c.PerTickInfo[currentTick][player.SteamID64] = pTick
 	}
 }
 
@@ -331,13 +314,10 @@ func (c *Collector) handleWeaponFire(e events.WeaponFire) {
 	if e.Shooter == nil {
 		return
 	}
-
 	currentTick := c.parser.GameState().IngameTick()
-
-	if _, exists := c.PerTickInfo[currentTick][e.Shooter.SteamID64]; !exists {
+	if _, ok := c.PerTickInfo[currentTick][e.Shooter.SteamID64]; !ok {
 		c.PerTickInfo[currentTick] = make(map[uint64]PlayerTickData)
 	}
-
 	shooterData := c.PerTickInfo[currentTick][e.Shooter.SteamID64]
 	shooterData.FiredActiveWeapon = true
 	c.PerTickInfo[currentTick][e.Shooter.SteamID64] = shooterData
@@ -346,7 +326,6 @@ func (c *Collector) handleWeaponFire(e events.WeaponFire) {
 func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 	gs := c.parser.GameState()
 	currentTick := gs.IngameTick()
-
 	if e.Attacker == nil || e.Player == nil {
 		return
 	}
@@ -354,11 +333,10 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 	attackerID := e.Attacker.SteamID64
 	victimID := e.Player.SteamID64
 
-	if _, exists := c.PerTickInfo[currentTick][attackerID]; !exists {
+	if _, ok := c.PerTickInfo[currentTick][attackerID]; !ok {
 		c.PerTickInfo[currentTick] = make(map[uint64]PlayerTickData)
 	}
-
-	if _, exists := c.PerTickInfo[currentTick][victimID]; !exists {
+	if _, ok := c.PerTickInfo[currentTick][victimID]; !ok {
 		c.PerTickInfo[currentTick] = make(map[uint64]PlayerTickData)
 	}
 
@@ -369,13 +347,13 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 		attackerData.DamageDealtToPlayer = make(map[uint64]DamageDealt)
 	}
 
-	currentDamage := DamageDealt{
+	dmg := DamageDealt{
 		ArmorDamage:  e.ArmorDamageTaken,
 		HealthDamage: e.HealthDamageTaken,
 		HitGroup:     byte(e.HitGroup),
 	}
 
-	attackerData.DamageDealtToPlayer[victimID] = currentDamage
+	attackerData.DamageDealtToPlayer[victimID] = dmg
 
 	c.PerTickInfo[currentTick][attackerID] = attackerData
 	c.PerTickInfo[currentTick][victimID] = victimData
