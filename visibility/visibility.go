@@ -456,7 +456,8 @@ func CanSeeTarget(
 
 	// 2) Use a relaxed FOV threshold.
 	// With a base FOV of 120° (half-FOV = 60°), adding 10° slack gives an effective threshold of 70°.
-	effectiveHalfFOV := 70.0
+	//effectiveHalfFOV := 70.0
+	effectiveHalfFOV := 100.0
 
 	// 3) Get the candidate visibility points on the target’s model.
 	points := getVisibilityPoints(playerModel)

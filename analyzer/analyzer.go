@@ -37,19 +37,22 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData,
 	medianTimeToDamage := make(map[uint64]float64)
 	msPerTick := 1000.0 / tickRate
 
+	// Track visibility start points to avoid counting multiple damage events
+	processedVisibility := make(map[string]bool)
+
 	for currentTick, playerMap := range tickData {
 		for steamID, player := range playerMap {
 			for targetID, damage := range player.DamageDealtToPlayer {
 				if damage.HealthDamage > 0 {
 					if lastVisibilityTick, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok {
-						timeDelta := float64(currentTick-lastVisibilityTick) * msPerTick
-						if timeDelta < 1000.0 {
-							if steamID == 76561197991944713 {
-								intervalMs := (currentTick - lastVisibilityTick) * int(tickTime.Milliseconds())
-								fmt.Printf("For shooter %d vs target %d: first visible tick = %d, damage tick = %d, interval = %d ms\n",
-									steamID, targetID, lastVisibilityTick, currentTick, intervalMs)
+						// Create unique key for this visibility window
+						visKey := fmt.Sprintf("%d-%d-%d", steamID, targetID, lastVisibilityTick)
+						if !processedVisibility[visKey] {
+							timeDelta := float64(currentTick-lastVisibilityTick) * msPerTick
+							if timeDelta < 1000.0 {
+								playerTimeToDamage[steamID] = append(playerTimeToDamage[steamID], timeDelta)
+								processedVisibility[visKey] = true
 							}
-							playerTimeToDamage[steamID] = append(playerTimeToDamage[steamID], timeDelta)
 						}
 					}
 				}
@@ -57,6 +60,7 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData,
 		}
 	}
 
+	// Calculate medians
 	for steamID, timings := range playerTimeToDamage {
 		if len(timings) == 0 {
 			medianTimeToDamage[steamID] = 0
