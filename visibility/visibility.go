@@ -28,11 +28,12 @@ func New(objDirPath string) *Visibility {
 }
 
 type Model struct {
-	triangles []types.Triangle
-	min, max  r3.Vector
-	sectors   map[string][]types.Triangle
-	gridSize  float64
-	hitboxes  []Hitbox
+	triangles        []types.Triangle
+	min, max         r3.Vector
+	sectors          map[string][]types.Triangle
+	gridSize         float64
+	hitboxes         []Hitbox
+	visibilityPoints []r3.Vector
 }
 
 type Hitbox struct {
@@ -388,7 +389,7 @@ func (v *Visibility) FindLastContinuousVisibilityStart(
 }
 
 // getVisibilityPoints returns points on the player model (head, shoulders, torso)
-func getVisibilityPoints(playerModel *Model) []r3.Vector {
+/*func getVisibilityPoints(playerModel *Model) []r3.Vector {
 	var points []r3.Vector
 
 	for _, hitbox := range playerModel.hitboxes {
@@ -432,6 +433,51 @@ func getVisibilityPoints(playerModel *Model) []r3.Vector {
 	}
 
 	return points
+}*/
+
+func (m *Model) GetVisibilityPoints() []r3.Vector {
+	if m.visibilityPoints != nil {
+		return m.visibilityPoints
+	}
+
+	var points []r3.Vector
+	for _, hitbox := range m.hitboxes {
+		center := r3.Vector{
+			X: (hitbox.MinBounds.X + hitbox.MaxBounds.X) / 2,
+			Y: (hitbox.MinBounds.Y + hitbox.MaxBounds.Y) / 2,
+			Z: (hitbox.MinBounds.Z + hitbox.MaxBounds.Z) / 2,
+		}
+
+		points = append(points, center)
+
+		switch hitbox.Type {
+		case "Box":
+			points = append(points,
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MaxBounds.Z},
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MaxBounds.Z},
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MinBounds.Z},
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MinBounds.Z},
+			)
+		case "Sphere":
+			radius := (hitbox.MaxBounds.Sub(hitbox.MinBounds)).Norm() / 2
+			points = append(points,
+				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
+				r3.Vector{X: center.X, Y: center.Y + radius, Z: center.Z},
+				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + radius},
+			)
+		case "Capsule":
+			height := hitbox.MaxBounds.Z - hitbox.MinBounds.Z
+			radius := (hitbox.MaxBounds.X - hitbox.MinBounds.X) / 2
+			points = append(points,
+				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
+				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + height/4},
+				r3.Vector{X: center.X, Y: center.Y, Z: center.Z - height/4},
+			)
+		}
+	}
+
+	m.visibilityPoints = points
+	return points
 }
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye
@@ -460,7 +506,7 @@ func CanSeeTarget(
 	effectiveHalfFOV := 100.0
 
 	// 3) Get the candidate visibility points on the target’s model.
-	points := getVisibilityPoints(playerModel)
+	points := playerModel.GetVisibilityPoints()
 
 	// 4) Check if any visibility point is within the relaxed FOV when measured from eyePos.
 	anyInFOV := false

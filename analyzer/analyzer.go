@@ -37,7 +37,7 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData,
 	medianTimeToDamage := make(map[uint64]float64)
 	msPerTick := 1000.0 / tickRate
 
-	// Track visibility start points to avoid counting multiple damage events
+	// Track the first damage in each engagement
 	processedVisibility := make(map[string]bool)
 
 	for currentTick, playerMap := range tickData {
@@ -45,13 +45,18 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]collector.PlayerTickData,
 			for targetID, damage := range player.DamageDealtToPlayer {
 				if damage.HealthDamage > 0 {
 					if lastVisibilityTick, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok {
-						// Create unique key for this visibility window
 						visKey := fmt.Sprintf("%d-%d-%d", steamID, targetID, lastVisibilityTick)
 						if !processedVisibility[visKey] {
 							timeDelta := float64(currentTick-lastVisibilityTick) * msPerTick
 							if timeDelta < 1000.0 {
+								// Only log if this is the first hit in an engagement
 								playerTimeToDamage[steamID] = append(playerTimeToDamage[steamID], timeDelta)
 								processedVisibility[visKey] = true
+
+								if steamID == 76561197991944713 {
+									fmt.Printf("For shooter %d vs target %d: first visible tick = %d, damage tick = %d, interval = %.2f ms\n",
+										steamID, targetID, lastVisibilityTick, currentTick, timeDelta)
+								}
 							}
 						}
 					}
