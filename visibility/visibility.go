@@ -32,6 +32,16 @@ type Model struct {
 	min, max  r3.Vector
 	sectors   map[string][]types.Triangle
 	gridSize  float64
+	hitboxes  []Hitbox
+}
+
+type Hitbox struct {
+	Name      string
+	BoneName  string
+	Vertices  []r3.Vector
+	MinBounds r3.Vector
+	MaxBounds r3.Vector
+	Type      string // "Box", "Sphere", "Capsule"
 }
 
 func NewModel() *Model {
@@ -98,6 +108,11 @@ func LoadOBJ(filename string) (*Model, error) {
 	model := NewModel()
 	var vertices []r3.Vector
 
+	// Hitbox parsing state
+	var currentHitbox *Hitbox
+	inHitboxSet := false
+	hitboxVertices := make([]r3.Vector, 0)
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -107,6 +122,36 @@ func LoadOBJ(filename string) (*Model, error) {
 		}
 
 		switch fields[0] {
+		case "g":
+			if len(fields) > 1 && strings.HasPrefix(fields[1], "hitboxset_") {
+				inHitboxSet = true
+			} else {
+				inHitboxSet = false
+			}
+
+		case "#":
+			if inHitboxSet && len(fields) > 2 && fields[1] == "Hitbox:" {
+				// Process previous hitbox if exists
+				if currentHitbox != nil && len(hitboxVertices) > 0 {
+					currentHitbox.Vertices = hitboxVertices
+					model.hitboxes = append(model.hitboxes, *currentHitbox)
+				}
+
+				// Parse hitbox info from comment
+				hitboxInfo := strings.Join(fields[2:], " ")
+				parts := strings.Split(hitboxInfo, "(")
+				if len(parts) == 2 {
+					name := strings.TrimSpace(parts[0])
+					boneName := strings.Trim(parts[1], ")")
+					currentHitbox = &Hitbox{
+						Name:     name,
+						BoneName: boneName,
+						Type:     determineHitboxType(hitboxInfo),
+					}
+					hitboxVertices = make([]r3.Vector, 0)
+				}
+			}
+
 		case "v":
 			if len(fields) < 4 {
 				continue
@@ -115,36 +160,61 @@ func LoadOBJ(filename string) (*Model, error) {
 			y, _ := strconv.ParseFloat(fields[2], 64)
 			z, _ := strconv.ParseFloat(fields[3], 64)
 			v := r3.Vector{X: x, Y: y, Z: z}
-			vertices = append(vertices, v)
 
-			model.min.X = math.Min(model.min.X, x)
-			model.min.Y = math.Min(model.min.Y, y)
-			model.min.Z = math.Min(model.min.Z, z)
-			model.max.X = math.Max(model.max.X, x)
-			model.max.Y = math.Max(model.max.Y, y)
-			model.max.Z = math.Max(model.max.Z, z)
+			if inHitboxSet && currentHitbox != nil {
+				hitboxVertices = append(hitboxVertices, v)
+				// Update hitbox bounds
+				if len(hitboxVertices) == 1 {
+					currentHitbox.MinBounds = v
+					currentHitbox.MaxBounds = v
+				} else {
+					currentHitbox.MinBounds = minVector(currentHitbox.MinBounds, v)
+					currentHitbox.MaxBounds = maxVector(currentHitbox.MaxBounds, v)
+				}
+			} else {
+				vertices = append(vertices, v)
+				model.min = minVector(model.min, v)
+				model.max = maxVector(model.max, v)
+			}
 
 		case "f":
-			if len(fields) < 4 {
-				continue
-			}
-			v1Idx, _ := strconv.Atoi(strings.Split(fields[1], "/")[0])
-			v2Idx, _ := strconv.Atoi(strings.Split(fields[2], "/")[0])
-			v3Idx, _ := strconv.Atoi(strings.Split(fields[3], "/")[0])
+			if !inHitboxSet && len(fields) >= 4 {
+				v1Idx, _ := strconv.Atoi(strings.Split(fields[1], "/")[0])
+				v2Idx, _ := strconv.Atoi(strings.Split(fields[2], "/")[0])
+				v3Idx, _ := strconv.Atoi(strings.Split(fields[3], "/")[0])
 
-			tri := types.Triangle{
-				V1: vertices[v1Idx-1],
-				V2: vertices[v2Idx-1],
-				V3: vertices[v3Idx-1],
-			}
-			model.triangles = append(model.triangles, tri)
-			if model.gridSize > 0 {
-				model.addTriangleToSectors(tri)
+				tri := types.Triangle{
+					V1: vertices[v1Idx-1],
+					V2: vertices[v2Idx-1],
+					V3: vertices[v3Idx-1],
+				}
+				model.triangles = append(model.triangles, tri)
+				if model.gridSize > 0 {
+					model.addTriangleToSectors(tri)
+				}
 			}
 		}
 	}
 
+	// Add final hitbox if exists
+	if currentHitbox != nil && len(hitboxVertices) > 0 {
+		currentHitbox.Vertices = hitboxVertices
+		model.hitboxes = append(model.hitboxes, *currentHitbox)
+	}
+
 	return model, nil
+}
+
+func determineHitboxType(info string) string {
+	lower := strings.ToLower(info)
+	switch {
+	case strings.Contains(lower, "sphere"):
+		return "Sphere"
+	case strings.Contains(lower, "capsule"):
+		return "Capsule"
+	default:
+		return "Box"
+	}
 }
 
 // addTriangleToSectors populates spatial partitioning for the model
@@ -319,71 +389,47 @@ func (v *Visibility) FindLastContinuousVisibilityStart(
 
 // getVisibilityPoints returns points on the player model (head, shoulders, torso)
 func getVisibilityPoints(playerModel *Model) []r3.Vector {
-	// Compute the extents from the bounding box.
-	width := playerModel.max.Y - playerModel.min.Y  // left/right extent
-	depth := playerModel.max.X - playerModel.min.X  // forward/back extent
-	height := playerModel.max.Z - playerModel.min.Z // vertical extent
+	var points []r3.Vector
 
-	// (Optional) Normalize Z by shifting by playerModel.min.Z.
-	// If you want feet exactly at 0, you can define a helper:
-	/*shiftZ := func(v r3.Vector) r3.Vector {
-		return r3.Vector{X: v.X, Y: v.Y, Z: v.Z - playerModel.min.Z}
-	}*/
+	for _, hitbox := range playerModel.hitboxes {
+		center := r3.Vector{
+			X: (hitbox.MinBounds.X + hitbox.MaxBounds.X) / 2,
+			Y: (hitbox.MinBounds.Y + hitbox.MaxBounds.Y) / 2,
+			Z: (hitbox.MinBounds.Z + hitbox.MaxBounds.Z) / 2,
+		}
 
-	// For simplicity, we assume that the model has been fixed so that minZ is approximately 0.
-	// Then, relative height (normalized) is: 0.0 = feet, 1.0 = top of head.
+		// Always include center point
+		points = append(points, center)
 
-	// --- Feet and Lower Legs ---
-	feetCenter := r3.Vector{X: 0, Y: 0, Z: 0}                           // Center of feet.
-	feetLeft := r3.Vector{X: 0, Y: width * 0.2, Z: 0}                   // A point on the left foot.
-	feetRight := r3.Vector{X: 0, Y: -width * 0.2, Z: 0}                 // A point on the right foot.
-	lowerLegCenter := r3.Vector{X: depth * 0.1, Y: 0, Z: height * 0.25} // Center of lower legs.
-	lowerLegLeft := r3.Vector{X: depth * 0.1, Y: width * 0.2, Z: height * 0.25}
-	lowerLegRight := r3.Vector{X: depth * 0.1, Y: -width * 0.2, Z: height * 0.25}
-
-	// --- Upper Legs ---
-	upperLegCenter := r3.Vector{X: depth * 0.2, Y: 0, Z: height * 0.4} // Center of upper legs.
-	upperLegLeft := r3.Vector{X: depth * 0.2, Y: width * 0.2, Z: height * 0.4}
-	upperLegRight := r3.Vector{X: depth * 0.2, Y: -width * 0.2, Z: height * 0.4}
-
-	// --- Torso / Chest ---
-	torsoCenter := r3.Vector{X: 0, Y: 0, Z: height * 0.65}
-	torsoFront := r3.Vector{X: depth * 0.5, Y: 0, Z: height * 0.65}
-	torsoLeft := r3.Vector{X: depth * 0.35, Y: width * 0.15, Z: height * 0.65}
-	torsoRight := r3.Vector{X: depth * 0.35, Y: -width * 0.15, Z: height * 0.65}
-
-	// --- Shoulders ---
-	shoulderCenter := r3.Vector{X: 0, Y: 0, Z: height * 0.8}
-	shoulderFrontLeft := r3.Vector{X: depth * 0.3, Y: width * 0.2, Z: height * 0.8}
-	shoulderFrontRight := r3.Vector{X: depth * 0.3, Y: -width * 0.2, Z: height * 0.8}
-
-	// --- Head ---
-	headCenter := r3.Vector{X: 0, Y: 0, Z: height * 0.95}
-	headFront := r3.Vector{X: depth * 0.5, Y: 0, Z: height * 0.9}
-	headBack := r3.Vector{X: -depth * 0.5, Y: 0, Z: height * 0.9}
-
-	// Combine all points. (If needed, you can call shiftZ on each vector if the model isn’t fixed.)
-	points := []r3.Vector{
-		// Feet and lower legs:
-		feetCenter, feetLeft, feetRight,
-		lowerLegCenter, lowerLegLeft, lowerLegRight,
-		// Upper legs:
-		upperLegCenter, upperLegLeft, upperLegRight,
-		// Torso:
-		torsoCenter, torsoFront, torsoLeft, torsoRight,
-		// Shoulders:
-		shoulderCenter, shoulderFrontLeft, shoulderFrontRight,
-		// Head:
-		headCenter, headFront, headBack,
+		// Add type-specific points
+		switch hitbox.Type {
+		case "Box":
+			// Add front corners for box-type hitboxes
+			points = append(points,
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MaxBounds.Z},
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MaxBounds.Z},
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MinBounds.Z},
+				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MinBounds.Z},
+			)
+		case "Sphere":
+			// For spheres, add cardinal points
+			radius := (hitbox.MaxBounds.Sub(hitbox.MinBounds)).Norm() / 2
+			points = append(points,
+				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
+				r3.Vector{X: center.X, Y: center.Y + radius, Z: center.Z},
+				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + radius},
+			)
+		case "Capsule":
+			// For capsules, add points along the primary axis
+			height := hitbox.MaxBounds.Z - hitbox.MinBounds.Z
+			radius := (hitbox.MaxBounds.X - hitbox.MinBounds.X) / 2
+			points = append(points,
+				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
+				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + height/4},
+				r3.Vector{X: center.X, Y: center.Y, Z: center.Z - height/4},
+			)
+		}
 	}
-
-	// Optionally, if your model isn't fixed so that minZ = 0,
-	// uncomment the following loop to shift every point:
-	/*
-	   for i, pt := range points {
-	       points[i] = shiftZ(pt)
-	   }
-	*/
 
 	return points
 }
