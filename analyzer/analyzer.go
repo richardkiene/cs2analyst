@@ -1,7 +1,6 @@
 package analyzer
 
 import (
-	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -9,6 +8,12 @@ import (
 	"github.com/richardkiene/cs2analyst/types"
 	"github.com/richardkiene/cs2analyst/visibility"
 )
+
+type visibilityWindow struct {
+	startTick int  // When visibility began
+	endTick   int  // When visibility ended
+	isValid   bool // Whether this is a valid visibility period
+}
 
 type Analyzer struct {
 	visibility visibility.Visibility
@@ -37,60 +42,84 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 	medianTimeToDamage := make(map[uint64]float64)
 	msPerTick := 1000.0 / tickRate
 
-	type cachedVisibility struct {
-		startTick int
-		processed bool
+	// Get all damage events in chronological order
+	var entries []struct {
+		tick     int
+		steamID  uint64
+		targetID uint64
+		damage   int
 	}
-	visibilityCache := make(map[string]*cachedVisibility)
 
-	for currentTick, playerMap := range tickData {
+	// Collect all damage events
+	for tick, playerMap := range tickData {
 		for steamID, player := range playerMap {
 			for targetID, damage := range player.DamageDealtToPlayer {
 				if damage.HealthDamage > 0 {
-					key := fmt.Sprintf("%d-%d", steamID, targetID)
-					cached, exists := visibilityCache[key]
-
-					var visibilityStartTick int
-					if exists && !cached.processed {
-						// Verify cached visibility is still valid
-						if result, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok && result.IsValid {
-							if result.StartTick == cached.startTick {
-								visibilityStartTick = cached.startTick
-							} else {
-								delete(visibilityCache, key)
-							}
-						} else {
-							delete(visibilityCache, key)
-						}
-					}
-
-					if !exists || cached.processed {
-						if result, ok := a.visibility.FindLastContinuousVisibilityStart(steamID, targetID, currentTick, tickData); ok && result.IsValid {
-							visibilityCache[key] = &cachedVisibility{
-								startTick: result.StartTick,
-								processed: false,
-							}
-							visibilityStartTick = result.StartTick
-						}
-					}
-
-					if cached, exists := visibilityCache[key]; exists && !cached.processed {
-						timeDelta := float64(currentTick-visibilityStartTick) * msPerTick
-						if timeDelta < 1000.0 {
-							playerTimeToDamage[steamID] = append(playerTimeToDamage[steamID], timeDelta)
-							cached.processed = true
-
-							if steamID == 76561197991944713 {
-								fmt.Printf("For shooter %d vs target %d: first visible tick = %d, damage tick = %d, interval = %.2f ms\n",
-									steamID, targetID, visibilityStartTick, currentTick, timeDelta)
-							}
-						}
-					}
+					entries = append(entries, struct {
+						tick     int
+						steamID  uint64
+						targetID uint64
+						damage   int
+					}{
+						tick:     tick,
+						steamID:  steamID,
+						targetID: targetID,
+						damage:   damage.HealthDamage,
+					})
 				}
 			}
 		}
 	}
 
+	// Sort by tick for deterministic processing
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].tick != entries[j].tick {
+			return entries[i].tick < entries[j].tick
+		}
+		if entries[i].steamID != entries[j].steamID {
+			return entries[i].steamID < entries[j].steamID
+		}
+		return entries[i].targetID < entries[j].targetID
+	})
+
+	// Process each damage event
+	for _, entry := range entries {
+		// For each damage event, find when we first saw the target
+		if result, ok := a.visibility.FindLastContinuousVisibilityStart(
+			entry.steamID, entry.targetID, entry.tick, tickData); ok && result.IsValid {
+
+			// Calculate time between first sight and damage
+			timeDelta := float64(entry.tick-result.StartTick) * msPerTick
+
+			// Only include TTD under 1 second (same as Leetify)
+			if timeDelta < 1000.0 {
+				playerTimeToDamage[entry.steamID] = append(
+					playerTimeToDamage[entry.steamID],
+					timeDelta,
+				)
+
+				// Debug logging
+				a.logger.Debug("TTD calculated",
+					"shooter", entry.steamID,
+					"target", entry.targetID,
+					"damageTick", entry.tick,
+					"firstSightTick", result.StartTick,
+					"ttd", timeDelta,
+				)
+			}
+		}
+	}
+
+	// Log samples before calculating median
+	for steamID, samples := range playerTimeToDamage {
+		a.logger.Info("TTD samples",
+			"steamID", steamID,
+			"sampleCount", len(samples),
+			"samples", samples,
+		)
+	}
+
+	// Calculate median TTD for each player
 	for steamID, timings := range playerTimeToDamage {
 		if len(timings) == 0 {
 			medianTimeToDamage[steamID] = 0
