@@ -147,6 +147,11 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 						"damageTick", dmg.tick,
 						"ttd", timeDelta)
 				}
+			} else {
+				a.logger.Warn("Damage without visibility",
+					"shooter", pair.shooter,
+					"target", pair.target,
+					"damageTick", dmg.tick)
 			}
 		}
 	}

@@ -417,48 +417,62 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 }
 
 func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
-	invisibleTicks := 0
-	lastVisibleTick := -1
-	var lastVisibleTime time.Duration
-	var lastVisibleShooterPos r3.Vector
-	var lastVisibleVictimPos r3.Vector
+	const maxWindowTicks = 320
+	const allowedGap = 8 // maximum number of consecutive ticks where visibility can be missing
+	var candidateTick = -1
+	var candidateTime time.Duration
+	var candidateShooterPos, candidateVictimPos r3.Vector
 
-	for tick := currentTick; tick >= 0; tick-- {
-		if currentTick-tick > 320 {
-			break
-		}
-
+	gapCount := 0
+	// Start at currentTick and move backwards, but only up to maxWindowTicks
+	for tick := currentTick; tick >= 0 && (currentTick-tick) <= maxWindowTicks; tick-- {
 		playerData, ok := perTickInfo[tick]
 		if !ok {
+			gapCount++
+			if gapCount > allowedGap {
+				break
+			}
 			continue
 		}
 		shooterTick, ok := playerData[playerID]
 		if !ok || !shooterTick.IsAlive || shooterTick.IsBlinded {
+			gapCount++
+			if gapCount > allowedGap {
+				break
+			}
 			continue
 		}
 		targetTick, ok := playerData[targetID]
 		if !ok || !targetTick.IsAlive {
+			gapCount++
+			if gapCount > allowedGap {
+				break
+			}
 			continue
 		}
-
-		isVisible := CanSeeTarget(shooterTick, targetTick, v.LosSystem.playerModel, v.LosSystem.mapModel, -1)
-		if isVisible {
-			lastVisibleTick = tick
-			lastVisibleTime = shooterTick.DemoTime
-			lastVisibleShooterPos = shooterTick.Position
-			lastVisibleVictimPos = targetTick.Position
-
-			invisibleTicks = 0
+		if CanSeeTarget(shooterTick, targetTick, v.LosSystem.playerModel, v.LosSystem.mapModel, -1) {
+			// Found a visible tick—update candidate and reset gap counter
+			candidateTick = tick
+			candidateTime = shooterTick.DemoTime
+			candidateShooterPos = shooterTick.Position
+			candidateVictimPos = targetTick.Position
+			gapCount = 0
 		} else {
-			invisibleTicks++
-			if invisibleTicks > 8 && lastVisibleTick != -1 {
-				return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true, ShooterPos: shooterTick.Position, VictimPos: targetTick.Position}, true
+			gapCount++
+			if gapCount > allowedGap {
+				break
 			}
 		}
 	}
 
-	if lastVisibleTick != -1 {
-		return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true, ShooterPos: lastVisibleShooterPos, VictimPos: lastVisibleVictimPos}, true
+	if candidateTick != -1 {
+		return VisibilityResult{
+			StartTick:  candidateTick,
+			StartTime:  candidateTime,
+			IsValid:    true,
+			ShooterPos: candidateShooterPos,
+			VictimPos:  candidateVictimPos,
+		}, true
 	}
 	return VisibilityResult{}, false
 }
