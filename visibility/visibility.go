@@ -47,9 +47,11 @@ func New(objDirPath string) *Visibility {
 }
 
 type VisibilityResult struct {
-	StartTick int
-	StartTime time.Duration
-	IsValid   bool
+	StartTick  int
+	StartTime  time.Duration
+	ShooterPos r3.Vector
+	VictimPos  r3.Vector
+	IsValid    bool
 }
 
 type Model struct {
@@ -418,6 +420,8 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	invisibleTicks := 0
 	lastVisibleTick := -1
 	var lastVisibleTime time.Duration
+	var lastVisibleShooterPos r3.Vector
+	var lastVisibleVictimPos r3.Vector
 
 	for tick := currentTick; tick >= 0; tick-- {
 		if currentTick-tick > 320 {
@@ -441,17 +445,20 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		if isVisible {
 			lastVisibleTick = tick
 			lastVisibleTime = shooterTick.DemoTime
+			lastVisibleShooterPos = shooterTick.Position
+			lastVisibleVictimPos = targetTick.Position
+
 			invisibleTicks = 0
 		} else {
 			invisibleTicks++
 			if invisibleTicks > 8 && lastVisibleTick != -1 {
-				return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true}, true
+				return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true, ShooterPos: shooterTick.Position, VictimPos: targetTick.Position}, true
 			}
 		}
 	}
 
 	if lastVisibleTick != -1 {
-		return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true}, true
+		return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true, ShooterPos: lastVisibleShooterPos, VictimPos: lastVisibleVictimPos}, true
 	}
 	return VisibilityResult{}, false
 }
@@ -536,6 +543,14 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 		return false
 	}
 
+	// Initialize our LOS aggregator for the shooter of interest.
+	// TODO: Remove this debug code
+	var losStats *LosStats
+	shooterOfInterest := uint64(76561197991944713)
+	if shooter.SteamID == shooterOfInterest {
+		losStats = NewLosStats()
+	}
+
 	// 4) For each candidate that passes the FOV test, do a detailed LOS test.
 	for _, bp := range points {
 		wp := target.Position.Add(bp)
@@ -555,16 +570,33 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 		// 6) Query the BVH for the nearest intersection distance.
 		hitT, hitFound := mapModel.bvh.RayIntersectionDistance(eyePos, rayDir, math.MaxFloat64)
 
-		// 7) Log detailed candidate info for debugging.
-		slog.Debug("LOS candidate test",
-			"shooter", shooter.SteamID,
-			"target", target.SteamID,
-			"eyePos", eyePos,
-			"candidatePoint", wp,
-			"distToCandidate", distToCandidate,
-			"hitFound", hitFound,
-			"hitT", hitT,
-			"tolerance", tolerance)
+		// Calculate the delta.
+		delta := distToCandidate - (hitT + tolerance)
+
+		// If this is our shooter of interest, update the aggregate stats.
+		if shooter.SteamID == shooterOfInterest {
+			// Consider a candidate borderline if delta is between 0 and 0.05 * distToCandidate.
+			// (You can adjust this fraction as needed.)
+			borderlineThreshold := distToCandidate * 0.05
+			losStats.UpdateLosStats(delta, borderlineThreshold)
+		}
+
+		// 7) Log detailed candidate info for debugging. (Keep it to only a single shooter because this output is huge for all shooters ~50GB)
+		/*if shooter.SteamID == 76561197991944713 {
+			slog.Debug("LOS candidate test",
+				"shooter", shooter.SteamID,
+				"shooter position X", shooter.Position.X,
+				"shooter position Y", shooter.Position.Y,
+				"target", target.SteamID,
+				"target position X", target.Position.X,
+				"target position Y", target.Position.Y,
+				"eyePos", eyePos,
+				"candidatePoint", wp,
+				"distToCandidate", distToCandidate,
+				"hitFound", hitFound,
+				"hitT", hitT,
+				"tolerance", tolerance)
+		}*/
 
 		// 8) Decision: if a hit is found and occurs significantly before the candidate point, this candidate is blocked.
 		if hitFound && (hitT+tolerance) < distToCandidate {
@@ -575,6 +607,12 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 			return true
 		}
 	}
+
+	// If we're processing our shooter of interest, output the aggregated stats.
+	if shooter.SteamID == shooterOfInterest && losStats != nil {
+		slog.Info("LOS aggregate stats for shooter", "stats", losStats.Summary())
+	}
+
 	return false
 }
 

@@ -9,13 +9,7 @@ import (
 	"github.com/richardkiene/cs2analyst/visibility"
 )
 
-type visibilityWindow struct {
-	startTick int // When visibility began
-	startTime time.Duration
-	endTick   int // When visibility ended
-	endTime   time.Duration
-	isValid   bool // Whether this is a valid visibility period
-}
+const minNewEngagementTicks = 100 // Minimum ticks between damage events to consider it a new engagement
 
 type Analyzer struct {
 	visibility visibility.Visibility
@@ -48,7 +42,6 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 	stats := make(map[uint64]struct {
 		damageEvents     int
 		visibilityChecks int
-		validWindows     int
 		ttdSamples       int
 	})
 
@@ -67,7 +60,7 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 	var allPairs []playerPair
 	pairsSeen := make(map[playerPair]bool)
 
-	// Collect all damage events
+	// Collect damage events
 	for tick, playerMap := range tickData {
 		for steamID, player := range playerMap {
 			for targetID, damage := range player.DamageDealtToPlayer {
@@ -104,67 +97,26 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 			return damages[i].tick < damages[j].tick
 		})
 
-		// Find visibility windows
-		var lastWindowEndTick int
-		var visibilityWindows []visibilityWindow
+		lastEngagementTick := -minNewEngagementTicks // Initialize to allow first engagement
 
+		// Process each damage event
 		for _, dmg := range damages {
-			if dmg.tick > lastWindowEndTick {
-				stat := stats[pair.shooter]
-				stat.visibilityChecks++
-				stats[pair.shooter] = stat
-				if result, ok := a.visibility.FindLastContinuousVisibilityStart(
-					pair.shooter, pair.target, dmg.tick, tickData); ok && result.IsValid {
-
-					// Find when this visibility period ends
-					endTick := dmg.tick
-					for t := result.StartTick; t <= dmg.tick; t++ {
-						if !a.canSeeAtTick(pair.shooter, pair.target, t, tickData) {
-							endTick = t - 1
-							break
-						}
-					}
-
-					window := visibilityWindow{
-						startTick: result.StartTick,
-						startTime: result.StartTime,
-						endTick:   endTick,
-						isValid:   true,
-					}
-					visibilityWindows = append(visibilityWindows, window)
-					lastWindowEndTick = endTick
-					stat := stats[pair.shooter]
-					stat.validWindows++
-					stats[pair.shooter] = stat
-
-					// Debug significant visibility windows (>100ms)
-					windowDuration := float64(endTick-result.StartTick) * msPerTick
-					if windowDuration > 100 {
-						a.logger.Debug("Significant visibility window",
-							"shooter", pair.shooter,
-							"target", pair.target,
-							"startTick", result.StartTick,
-							"endTick", endTick,
-							"duration_ms", windowDuration)
-					}
-				}
-			}
-		}
-
-		// Calculate TTD for each damage event
-		for _, dmg := range damages {
-			var relevantWindow *visibilityWindow
-			for i := len(visibilityWindows) - 1; i >= 0; i-- {
-				window := visibilityWindows[i]
-				if window.startTick <= dmg.tick && window.isValid {
-					relevantWindow = &visibilityWindows[i]
-					break
-				}
+			// Skip if this damage is too close to the last engagement
+			if dmg.tick-lastEngagementTick < minNewEngagementTicks {
+				continue
 			}
 
-			if relevantWindow != nil {
-				timeDelta := float64(dmg.tick-relevantWindow.startTick) * msPerTick
-				if timeDelta < 1000.0 {
+			stat := stats[pair.shooter]
+			stat.visibilityChecks++
+			stats[pair.shooter] = stat
+
+			// Find when the shooter first saw the target before this damage
+			if result, ok := a.visibility.FindLastContinuousVisibilityStart(
+				pair.shooter, pair.target, dmg.tick, tickData); ok && result.IsValid {
+
+				// Calculate TTD
+				timeDelta := float64(dmg.tick-result.StartTick) * msPerTick
+				if timeDelta < 1000.0 { // Filter out unreasonably long TTDs
 					playerTimeToDamage[pair.shooter] = append(
 						playerTimeToDamage[pair.shooter],
 						timeDelta,
@@ -173,32 +125,33 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 					stat.ttdSamples++
 					stats[pair.shooter] = stat
 
-					// Debug TTD samples that are significantly different from Leetify's numbers
-					// Adjust these thresholds based on the differences we're seeing
-					if pair.shooter == 76561198863796909 && timeDelta < 900 { // Example player with big difference
-						a.logger.Debug("Noteworthy TTD sample",
-							"shooter", pair.shooter,
-							"target", pair.target,
-							"damageTick", dmg.tick,
-							"visibilityStartTick", relevantWindow.startTick,
-							"ttd", timeDelta)
-					}
+					lastEngagementTick = dmg.tick
+
+					// Debug logging
+					// Setting to Warn for now
+					a.logger.Warn("TTD sample recorded",
+						"shooter", pair.shooter,
+						"target", pair.target,
+						"visibilityStartTick", result.StartTick,
+						"firstVisibleShooterPos", result.ShooterPos,
+						"firstVisibleTargetPos", result.VictimPos,
+						"damageTick", dmg.tick,
+						"ttd", timeDelta)
+				} else if timeDelta >= 1000.0 && timeDelta < 1500.00 && pair.shooter == 76561198863796909 {
+					a.logger.Warn("TTD sample in suspect zone",
+						"shooter", pair.shooter,
+						"target", pair.target,
+						"visibilityStartTick", result.StartTick,
+						"firstVisibleShooterPos", result.ShooterPos,
+						"firstVisibleTargetPos", result.VictimPos,
+						"damageTick", dmg.tick,
+						"ttd", timeDelta)
 				}
 			}
 		}
 	}
 
-	// Log processing stats before median calculation
-	for steamID, stat := range stats {
-		a.logger.Info("Player processing stats",
-			"steamID", steamID,
-			"damageEvents", stat.damageEvents,
-			"visibilityChecks", stat.visibilityChecks,
-			"validWindows", stat.validWindows,
-			"ttdSamples", stat.ttdSamples)
-	}
-
-	// Calculate and log medians
+	// Calculate medians
 	for steamID, timings := range playerTimeToDamage {
 		if len(timings) == 0 {
 			medianTimeToDamage[steamID] = 0
@@ -215,39 +168,16 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 		}
 		medianTimeToDamage[steamID] = median
 
-		// Log distribution info for players with significant differences from Leetify
-		if steamID == 76561198863796909 || // Example player with big difference
-			steamID == 76561199214428404 { // Another example
-			a.logger.Info("TTD distribution",
-				"steamID", steamID,
-				"sampleCount", len(timings),
-				"median", median,
-				"min", timings[0],
-				"max", timings[len(timings)-1],
-				"p25", timings[len(timings)/4],
-				"p75", timings[len(timings)*3/4])
-		}
+		// Log distribution info
+		a.logger.Info("TTD distribution",
+			"steamID", steamID,
+			"sampleCount", len(timings),
+			"median", median,
+			"min", timings[0],
+			"max", timings[len(timings)-1],
+			"p25", timings[len(timings)/4],
+			"p75", timings[len(timings)*3/4])
 	}
 
 	return medianTimeToDamage, nil
-}
-
-// Helper function to check visibility at a specific tick
-func (a *Analyzer) canSeeAtTick(shooter, target uint64, tick int, tickData map[int]map[uint64]types.PlayerTickData) bool {
-	if tickMap, ok := tickData[tick]; ok {
-		if shooterData, ok := tickMap[shooter]; ok {
-			if targetData, ok := tickMap[target]; ok {
-				if !shooterData.IsAlive || !targetData.IsAlive || shooterData.IsBlinded {
-					return false
-				}
-
-				if result, ok := a.visibility.FindLastContinuousVisibilityStart(shooter, target, tick, tickData); ok && result.IsValid {
-					return true
-				}
-
-				return false
-			}
-		}
-	}
-	return false
 }
