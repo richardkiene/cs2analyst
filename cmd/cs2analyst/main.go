@@ -12,14 +12,17 @@ import (
 )
 
 type config struct {
-	demoPath   string
-	playerName string
-	mapsDir    string
-	modelsDir  string
-	logLevel   string
-	output     string
-	outputPath string
-	dbConfig   string
+	demoPath       string
+	playerName     string
+	mapsDir        string
+	modelsDir      string
+	logLevel       string
+	output         string
+	outputPath     string
+	dbConfig       string
+	debugTick      int
+	debugShooterID uint64
+	debugTargetID  uint64
 }
 
 func newRootCmd() *cobra.Command {
@@ -50,6 +53,9 @@ func newRootCmd() *cobra.Command {
 	flags.StringVar(&cfg.output, "output", "", "output format (json, protobuf, db) (required)")
 	flags.StringVar(&cfg.outputPath, "output-path", "", "path for json/protobuf output")
 	flags.StringVar(&cfg.dbConfig, "db-config", "", "database configuration for db output")
+	flags.IntVar(&cfg.debugTick, "debug-tick", -1, "generate debug visualization for specific tick")
+	flags.Uint64Var(&cfg.debugShooterID, "debug-shooter", 0, "steamID of the shooter for debug visualization")
+	flags.Uint64Var(&cfg.debugTargetID, "debug-target", 0, "steamID of the target for debug visualization")
 
 	cmd.MarkFlagRequired("demo")
 	cmd.MarkFlagRequired("maps")
@@ -71,6 +77,13 @@ func validateConfig(cfg *config) error {
 		}
 	default:
 		return fmt.Errorf("invalid output format: must be json, protobuf, or db")
+	}
+
+	// Debug flags validation
+	if cfg.debugTick >= 0 || cfg.debugShooterID != 0 || cfg.debugTargetID != 0 {
+		if cfg.debugTick < 0 || cfg.debugShooterID == 0 || cfg.debugTargetID == 0 {
+			return fmt.Errorf("debug-tick, debug-shooter, and debug-target must all be specified together")
+		}
 	}
 
 	return nil
@@ -109,6 +122,24 @@ func run(cfg *config) error {
 	_, err := c.Collect(cfg.demoPath)
 	if err != nil {
 		return fmt.Errorf("failed to process demo: %w", err)
+	}
+
+	// If debug flags are set, generate debug visualization
+	if cfg.debugTick >= 0 && cfg.debugShooterID != 0 && cfg.debugTargetID != 0 {
+		logger.Info("Generating debug visualization",
+			"tick", cfg.debugTick,
+			"shooterID", cfg.debugShooterID,
+			"targetID", cfg.debugTargetID)
+
+		if err := a.GenerateDebugVisualization(
+			cfg.debugTick,
+			cfg.debugShooterID,
+			cfg.debugTargetID,
+			c.PerTickInfo,
+		); err != nil {
+			return fmt.Errorf("failed to generate debug visualization: %w", err)
+		}
+		return nil
 	}
 
 	// Analyze collected data

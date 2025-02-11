@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -185,4 +186,57 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 	}
 
 	return medianTimeToDamage, nil
+}
+
+func (a *Analyzer) GenerateDebugVisualization(
+	tick int,
+	shooterSteamID uint64,
+	targetSteamID uint64,
+	tickData map[int]map[uint64]types.PlayerTickData,
+) error {
+	// Get tick data
+	tickPlayers, exists := tickData[tick]
+	if !exists {
+		return fmt.Errorf("tick %d not found in data", tick)
+	}
+
+	// Get shooter data
+	shooter, exists := tickPlayers[shooterSteamID]
+	if !exists {
+		return fmt.Errorf("shooter %d not found at tick %d", shooterSteamID, tick)
+	}
+
+	// Get target data
+	target, exists := tickPlayers[targetSteamID]
+	if !exists {
+		return fmt.Errorf("target %d not found at tick %d", targetSteamID, tick)
+	}
+
+	if !shooter.IsAlive || !target.IsAlive {
+		return fmt.Errorf("either shooter or target is not alive at tick %d", tick)
+	}
+
+	// Use the existing CreateShooterCentricFOVUsingTargetDistance from visibility package
+	// Using same 200 degree FOV (effectiveHalfFOV * 2) from CanSeeTarget function
+	err := visibility.CreateShooterCentricFOVUsingTargetDistance(
+		tick,
+		a.visibility.LosSystem.MapModel,
+		a.visibility.LosSystem.PlayerModel,
+		shooter,
+		target,
+		200.0, // FOV degrees - matching CanSeeTarget's effectiveHalfFOV * 2
+		0.0,   // No extra padding - we want to see exactly what the system sees
+		true,  // Include debug cone
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create debug visualization: %w", err)
+	}
+
+	a.logger.Info("Debug visualization created",
+		"tick", tick,
+		"shooter", shooterSteamID,
+		"target", targetSteamID)
+
+	return nil
 }

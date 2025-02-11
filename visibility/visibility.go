@@ -88,8 +88,8 @@ func (m *Model) TrianglesRaw() []types.Triangle {
 }
 
 type LineOfSightSystem struct {
-	mapModel    *Model
-	playerModel *Model
+	MapModel    *Model
+	PlayerModel *Model
 	logger      *slog.Logger
 }
 
@@ -105,8 +105,8 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
 	}
-	los.mapModel = mapM
-	los.playerModel = playerM
+	los.MapModel = mapM
+	los.PlayerModel = playerM
 	return &los, nil
 }
 
@@ -450,7 +450,7 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 			}
 			continue
 		}
-		if CanSeeTarget(shooterTick, targetTick, v.LosSystem.playerModel, v.LosSystem.mapModel, -1) {
+		if CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, -1) {
 			// Found a visible tick—update candidate and reset gap counter
 			candidateTick = tick
 			candidateTime = shooterTick.DemoTime
