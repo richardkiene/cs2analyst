@@ -57,6 +57,7 @@ type PlayerTickData struct {
 	CurrentRoundMoneySpent int
 	CurrentMoneySpentTotal int
 	DamageDealtToPlayer    map[uint64]DamageDealt
+	DemoTime               time.Duration
 }
 
 // ForwardVector computes the direction the player is looking in Source2 coords:

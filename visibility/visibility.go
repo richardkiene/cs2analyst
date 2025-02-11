@@ -6,12 +6,32 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/golang/geo/r3"
 	"github.com/richardkiene/cs2analyst/types"
 )
+
+const maxTrianglesPerLeaf = 8
+
+type AABB struct {
+	Min, Max r3.Vector
+}
+
+// Used as a cache lookup key
+type gridKey struct {
+	x, y, z int
+}
+
+type BVHNode struct {
+	bbox      AABB
+	left      *BVHNode
+	right     *BVHNode
+	triangles []types.Triangle // non-nil for leaf nodes
+}
 
 type Visibility struct {
 	objDirPath string
@@ -28,16 +48,18 @@ func New(objDirPath string) *Visibility {
 
 type VisibilityResult struct {
 	StartTick int
+	StartTime time.Duration
 	IsValid   bool
 }
 
 type Model struct {
 	triangles        []types.Triangle
 	min, max         r3.Vector
-	sectors          map[string][]types.Triangle
+	sectors          map[gridKey][]types.Triangle
 	gridSize         float64
 	hitboxes         []Hitbox
 	visibilityPoints []r3.Vector
+	bvh              *BVHNode
 }
 
 type Hitbox struct {
@@ -51,7 +73,7 @@ type Hitbox struct {
 
 func NewModel() *Model {
 	return &Model{
-		sectors:  make(map[string][]types.Triangle),
+		sectors:  make(map[gridKey][]types.Triangle),
 		gridSize: 16.0,
 		min:      r3.Vector{X: 1e10, Y: 1e10, Z: 1e10},
 		max:      r3.Vector{X: -1e10, Y: -1e10, Z: -1e10},
@@ -207,6 +229,8 @@ func LoadOBJ(filename string) (*Model, error) {
 		model.hitboxes = append(model.hitboxes, *currentHitbox)
 	}
 
+	model.bvh = BuildBVH(model.triangles)
+
 	return model, nil
 }
 
@@ -241,45 +265,97 @@ func (m *Model) addTriangleToSectors(t types.Triangle) {
 	for x := startX; x <= endX; x++ {
 		for y := startY; y <= endY; y++ {
 			for z := startZ; z <= endZ; z++ {
-				key := fmt.Sprintf("%d:%d:%d", x, y, z)
+				key := gridKey{x, y, z}
 				m.sectors[key] = append(m.sectors[key], t)
 			}
 		}
 	}
 }
 
-func (m *Model) getSectorKey(pos r3.Vector) string {
-	x := int(pos.X / m.gridSize)
-	y := int(pos.Y / m.gridSize)
-	z := int(pos.Z / m.gridSize)
-	return fmt.Sprintf("%d:%d:%d", x, y, z)
-}
-
 // GetRelevantMapGeometry returns triangles along the line from start->end
 func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
-	visited := make(map[string]bool)
+	visited := make(map[gridKey]bool, 128)
 	var relevant []types.Triangle
 
+	// Compute the direction and length.
 	dir := end.Sub(start)
 	length := dir.Norm()
-	steps := int(length/m.gridSize) + 1
+	if length == 0 {
+		key := gridKey{
+			x: int(math.Floor(start.X / m.gridSize)),
+			y: int(math.Floor(start.Y / m.gridSize)),
+			z: int(math.Floor(start.Z / m.gridSize)),
+		}
+		if triList, ok := m.sectors[key]; ok {
+			relevant = append(relevant, triList...)
+		}
+		return relevant
+	}
+	direction := dir.Mul(1 / length)
 
-	const corridorRadius = 1
-	for i := 0; i <= steps; i++ {
-		t := float64(i) / float64(steps)
-		pos := start.Add(dir.Mul(t))
-		for dx := -corridorRadius; dx <= corridorRadius; dx++ {
-			for dy := -corridorRadius; dy <= corridorRadius; dy++ {
-				for dz := -corridorRadius; dz <= corridorRadius; dz++ {
-					if dx*dx+dy*dy+dz*dz > corridorRadius*corridorRadius {
-						continue
+	// Initialize starting cell using floor division.
+	cellX := int(math.Floor(start.X / m.gridSize))
+	cellY := int(math.Floor(start.Y / m.gridSize))
+	cellZ := int(math.Floor(start.Z / m.gridSize))
+
+	// Setup DDA: determine stepping and initial tMax/tDelta values.
+	var stepX, stepY, stepZ int
+	var tMaxX, tMaxY, tMaxZ float64
+	var tDeltaX, tDeltaY, tDeltaZ float64
+
+	if direction.X > 0 {
+		stepX = 1
+		tMaxX = (((float64(cellX)+1)*m.gridSize - start.X) / direction.X)
+		tDeltaX = m.gridSize / direction.X
+	} else if direction.X < 0 {
+		stepX = -1
+		tMaxX = (start.X - float64(cellX)*m.gridSize) / -direction.X
+		tDeltaX = m.gridSize / -direction.X
+	} else {
+		tMaxX = math.MaxFloat64
+		tDeltaX = math.MaxFloat64
+	}
+
+	if direction.Y > 0 {
+		stepY = 1
+		tMaxY = (((float64(cellY)+1)*m.gridSize - start.Y) / direction.Y)
+		tDeltaY = m.gridSize / direction.Y
+	} else if direction.Y < 0 {
+		stepY = -1
+		tMaxY = (start.Y - float64(cellY)*m.gridSize) / -direction.Y
+		tDeltaY = m.gridSize / -direction.Y
+	} else {
+		tMaxY = math.MaxFloat64
+		tDeltaY = math.MaxFloat64
+	}
+
+	if direction.Z > 0 {
+		stepZ = 1
+		tMaxZ = (((float64(cellZ)+1)*m.gridSize - start.Z) / direction.Z)
+		tDeltaZ = m.gridSize / direction.Z
+	} else if direction.Z < 0 {
+		stepZ = -1
+		tMaxZ = (start.Z - float64(cellZ)*m.gridSize) / -direction.Z
+		tDeltaZ = m.gridSize / -direction.Z
+	} else {
+		tMaxZ = math.MaxFloat64
+		tDeltaZ = math.MaxFloat64
+	}
+
+	// Choose a corridor radius that isn’t too big.
+	const corridor = 1
+
+	t := 0.0
+	for t <= length {
+		// Instead of calling fmt.Sprintf, use our gridKey struct.
+		for dx := -corridor; dx <= corridor; dx++ {
+			for dy := -corridor; dy <= corridor; dy++ {
+				for dz := -corridor; dz <= corridor; dz++ {
+					key := gridKey{
+						x: cellX + dx,
+						y: cellY + dy,
+						z: cellZ + dz,
 					}
-					checkPos := r3.Vector{
-						X: pos.X + float64(dx)*m.gridSize,
-						Y: pos.Y + float64(dy)*m.gridSize,
-						Z: pos.Z + float64(dz)*m.gridSize,
-					}
-					key := m.getSectorKey(checkPos)
 					if !visited[key] {
 						visited[key] = true
 						if triList, ok := m.sectors[key]; ok {
@@ -289,23 +365,41 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 				}
 			}
 		}
+
+		// Step to the next grid cell using DDA.
+		if tMaxX < tMaxY {
+			if tMaxX < tMaxZ {
+				t = tMaxX
+				cellX += stepX
+				tMaxX += tDeltaX
+			} else {
+				t = tMaxZ
+				cellZ += stepZ
+				tMaxZ += tDeltaZ
+			}
+		} else {
+			if tMaxY < tMaxZ {
+				t = tMaxY
+				cellY += stepY
+				tMaxY += tDeltaY
+			} else {
+				t = tMaxZ
+				cellZ += stepZ
+				tMaxZ += tDeltaZ
+			}
+		}
 	}
 
-	// check start+end with a bigger radius
+	// Also check the start and end cells with a slightly larger corridor.
 	for _, point := range []r3.Vector{start, end} {
-		const endpointRadius = 2
-		for dx := -endpointRadius; dx <= endpointRadius; dx++ {
-			for dy := -endpointRadius; dy <= endpointRadius; dy++ {
-				for dz := -endpointRadius; dz <= endpointRadius; dz++ {
-					if dx*dx+dy*dy+dz*dz > endpointRadius*endpointRadius {
-						continue
-					}
-					checkPos := r3.Vector{
-						X: point.X + float64(dx)*m.gridSize,
-						Y: point.Y + float64(dy)*m.gridSize,
-						Z: point.Z + float64(dz)*m.gridSize,
-					}
-					key := m.getSectorKey(checkPos)
+		cx := int(math.Floor(point.X / m.gridSize))
+		cy := int(math.Floor(point.Y / m.gridSize))
+		cz := int(math.Floor(point.Z / m.gridSize))
+		const endpointCorridor = 2
+		for dx := -endpointCorridor; dx <= endpointCorridor; dx++ {
+			for dy := -endpointCorridor; dy <= endpointCorridor; dy++ {
+				for dz := -endpointCorridor; dz <= endpointCorridor; dz++ {
+					key := gridKey{cx + dx, cy + dy, cz + dz}
 					if !visited[key] {
 						visited[key] = true
 						if triList, ok := m.sectors[key]; ok {
@@ -317,18 +411,13 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 		}
 	}
 
-	slog.Debug("GetRelevantMapGeometry",
-		"startPos", start,
-		"endPos", end,
-		"sectorsVisited", len(visited),
-		"trianglesFound", len(relevant),
-	)
 	return relevant
 }
 
 func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
 	invisibleTicks := 0
 	lastVisibleTick := -1
+	var lastVisibleTime time.Duration
 
 	for tick := currentTick; tick >= 0; tick-- {
 		if currentTick-tick > 320 {
@@ -351,17 +440,18 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		isVisible := CanSeeTarget(shooterTick, targetTick, v.LosSystem.playerModel, v.LosSystem.mapModel, -1)
 		if isVisible {
 			lastVisibleTick = tick
+			lastVisibleTime = shooterTick.DemoTime
 			invisibleTicks = 0
 		} else {
 			invisibleTicks++
 			if invisibleTicks > 8 && lastVisibleTick != -1 {
-				return VisibilityResult{StartTick: lastVisibleTick, IsValid: true}, true
+				return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true}, true
 			}
 		}
 	}
 
 	if lastVisibleTick != -1 {
-		return VisibilityResult{StartTick: lastVisibleTick, IsValid: true}, true
+		return VisibilityResult{StartTick: lastVisibleTick, StartTime: lastVisibleTime, IsValid: true}, true
 	}
 	return VisibilityResult{}, false
 }
@@ -412,19 +502,12 @@ func (m *Model) GetVisibilityPoints() []r3.Vector {
 }
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye
-func CanSeeTarget(
-	shooter, target types.PlayerTickData,
-	playerModel, mapModel *Model,
-	tick int,
-) bool {
+func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) bool {
 	// 1) Compute the shooter’s eye position.
-	// In Source2, shooter.Position is at the feet.
-	// We use 85% of the model’s bounding box height as an approximate eye offset.
 	eyeHeight := playerModel.max.Z * 0.85
 	if shooter.IsCrouched {
 		eyeHeight *= 0.75
 	}
-	// Use the computed eyeHeight so that the eye is above the feet.
 	eyePos := r3.Vector{
 		X: shooter.Position.X,
 		Y: shooter.Position.Y,
@@ -432,24 +515,19 @@ func CanSeeTarget(
 	}
 
 	// 2) Use a relaxed FOV threshold.
-	// With a base FOV of 120° (half-FOV = 60°), adding 10° slack gives an effective threshold of 70°.
-	//effectiveHalfFOV := 70.0
 	effectiveHalfFOV := 100.0
+	cosThreshold := math.Cos(effectiveHalfFOV * math.Pi / 180.0)
 
-	// 3) Get the candidate visibility points on the target’s model.
+	// 3) Get candidate visibility points.
 	points := playerModel.GetVisibilityPoints()
+	forward := shooter.ForwardVector()
 
-	// 4) Check if any visibility point is within the relaxed FOV when measured from eyePos.
+	// Check if any candidate is roughly in the shooter’s FOV.
 	anyInFOV := false
 	for _, bp := range points {
 		wp := target.Position.Add(bp)
-		// Compute the direction from eyePos to this candidate point.
 		toTarget := wp.Sub(eyePos).Normalize()
-		// Use the shooter’s forward vector (computed from view angles).
-		forward := shooter.ForwardVector()
-		// Compute the angle in degrees.
-		angleDegrees := math.Acos(forward.Dot(toTarget)) * (180.0 / math.Pi)
-		if angleDegrees <= effectiveHalfFOV {
+		if forward.Dot(toTarget) >= cosThreshold {
 			anyInFOV = true
 			break
 		}
@@ -458,41 +536,302 @@ func CanSeeTarget(
 		return false
 	}
 
-	// 5) For each visibility point that meets the relaxed FOV test, perform a line-of-sight (LOS) test.
+	// 4) For each candidate that passes the FOV test, do a detailed LOS test.
 	for _, bp := range points {
 		wp := target.Position.Add(bp)
-		// Recompute the angle from eyePos to the candidate point.
 		toTarget := wp.Sub(eyePos).Normalize()
-		forward := shooter.ForwardVector()
-		angleDegrees := math.Acos(forward.Dot(toTarget)) * (180.0 / math.Pi)
-		if angleDegrees > effectiveHalfFOV {
-			continue
+		if forward.Dot(toTarget) < cosThreshold {
+			continue // Skip candidates outside the FOV.
 		}
-		// Compute the ray direction from the eye to this point.
+
+		// Compute ray direction and distance.
 		rayDir := wp.Sub(eyePos).Normalize()
+		distToCandidate := wp.Sub(eyePos).Norm()
 
-		// Define a bounding region for the LOS test (add padding).
-		padding := r3.Vector{X: 200, Y: 200, Z: 200}
-		start := minVector(eyePos, wp).Sub(padding)
-		end := maxVector(eyePos, wp).Add(padding)
-		relevantTriangles := mapModel.GetRelevantMapGeometry(start, end)
+		// 5) Compute a tolerance (5% of the candidate distance).
+		//tolerance := distToCandidate * 0.05
+		tolerance := distToCandidate * 0.10
 
-		blocked := false
-		for _, tri := range relevantTriangles {
-			if rayIntersectsTriangle(eyePos, rayDir, tri) {
-				blocked = true
-				break
-			}
-		}
-		if !blocked {
-			// Optionally, if you want to output debug geometry for a specific SteamID and tick:
-			if tick >= 0 && shooter.SteamID == 76561197991944713 {
-				_ = CreateShooterCentricFOVUsingTargetDistance(tick, mapModel, playerModel, shooter, target, 120.0, 300.0, true)
-			}
+		// 6) Query the BVH for the nearest intersection distance.
+		hitT, hitFound := mapModel.bvh.RayIntersectionDistance(eyePos, rayDir, math.MaxFloat64)
+
+		// 7) Log detailed candidate info for debugging.
+		slog.Debug("LOS candidate test",
+			"shooter", shooter.SteamID,
+			"target", target.SteamID,
+			"eyePos", eyePos,
+			"candidatePoint", wp,
+			"distToCandidate", distToCandidate,
+			"hitFound", hitFound,
+			"hitT", hitT,
+			"tolerance", tolerance)
+
+		// 8) Decision: if a hit is found and occurs significantly before the candidate point, this candidate is blocked.
+		if hitFound && (hitT+tolerance) < distToCandidate {
+			// Candidate is blocked; try the next candidate.
+			continue
+		} else {
+			// Either no hit was found or the hit is very near or beyond the candidate.
 			return true
 		}
 	}
+	return false
+}
 
+// NewAABBFromTriangle computes an AABB for a triangle.
+func NewAABBFromTriangle(tri types.Triangle) AABB {
+	min := r3.Vector{
+		X: math.Min(tri.V1.X, math.Min(tri.V2.X, tri.V3.X)),
+		Y: math.Min(tri.V1.Y, math.Min(tri.V2.Y, tri.V3.Y)),
+		Z: math.Min(tri.V1.Z, math.Min(tri.V2.Z, tri.V3.Z)),
+	}
+	max := r3.Vector{
+		X: math.Max(tri.V1.X, math.Max(tri.V2.X, tri.V3.X)),
+		Y: math.Max(tri.V1.Y, math.Max(tri.V2.Y, tri.V3.Y)),
+		Z: math.Max(tri.V1.Z, math.Max(tri.V2.Z, tri.V3.Z)),
+	}
+	return AABB{Min: min, Max: max}
+}
+
+// unionAABB returns the smallest AABB that encloses both a and b.
+func unionAABB(a, b AABB) AABB {
+	return AABB{
+		Min: r3.Vector{
+			X: math.Min(a.Min.X, b.Min.X),
+			Y: math.Min(a.Min.Y, b.Min.Y),
+			Z: math.Min(a.Min.Z, b.Min.Z),
+		},
+		Max: r3.Vector{
+			X: math.Max(a.Max.X, b.Max.X),
+			Y: math.Max(a.Max.Y, b.Max.Y),
+			Z: math.Max(a.Max.Z, b.Max.Z),
+		},
+	}
+}
+
+// IntersectRay tests whether the ray (origin, dir) intersects the AABB
+// before the ray parameter exceeds maxT. (Uses a simple slab method.)
+func (a *AABB) IntersectRay(origin, dir r3.Vector, maxT float64) bool {
+	tmin := -math.MaxFloat64
+	tmax := math.MaxFloat64
+
+	// For each axis, compute the intersection interval.
+	for i, o := range []float64{origin.X, origin.Y, origin.Z} {
+		d := 0.0
+		minVal, maxVal := 0.0, 0.0
+		switch i {
+		case 0:
+			d = dir.X
+			minVal, maxVal = a.Min.X, a.Max.X
+		case 1:
+			d = dir.Y
+			minVal, maxVal = a.Min.Y, a.Max.Y
+		case 2:
+			d = dir.Z
+			minVal, maxVal = a.Min.Z, a.Max.Z
+		}
+		if math.Abs(d) < 1e-8 {
+			// Ray is nearly parallel: if the origin is not within the slab, no hit.
+			if o < minVal || o > maxVal {
+				return false
+			}
+		} else {
+			invD := 1.0 / d
+			t0 := (minVal - o) * invD
+			t1 := (maxVal - o) * invD
+			if t0 > t1 {
+				t0, t1 = t1, t0
+			}
+			if t0 > tmin {
+				tmin = t0
+			}
+			if t1 < tmax {
+				tmax = t1
+			}
+			if tmin > tmax || tmax < 0 {
+				return false
+			}
+		}
+	}
+	return tmin < maxT
+}
+
+// BuildBVH constructs a BVH from a slice of triangles.
+func BuildBVH(triangles []types.Triangle) *BVHNode {
+	if len(triangles) == 0 {
+		return nil
+	}
+	return buildBVHRecursive(triangles)
+}
+
+func buildBVHRecursive(triangles []types.Triangle) *BVHNode {
+	node := &BVHNode{}
+	// Compute bounding box for all triangles.
+	bbox := NewAABBFromTriangle(triangles[0])
+	for _, tri := range triangles[1:] {
+		triBBox := NewAABBFromTriangle(tri)
+		bbox = unionAABB(bbox, triBBox)
+	}
+	node.bbox = bbox
+
+	// If few triangles remain, make a leaf.
+	if len(triangles) <= maxTrianglesPerLeaf {
+		node.triangles = triangles
+		return node
+	}
+
+	// Choose the axis with the largest extent.
+	extents := bbox.Max.Sub(bbox.Min)
+	axis := 0
+	if extents.Y > extents.X {
+		axis = 1
+	}
+	if extents.Z > extents.X && extents.Z > extents.Y {
+		axis = 2
+	}
+
+	// Create a slice of (triangle, centroid) pairs.
+	type triCentroid struct {
+		tri      types.Triangle
+		centroid float64
+	}
+	arr := make([]triCentroid, len(triangles))
+	for i, tri := range triangles {
+		centroid := (tri.V1.Add(tri.V2).Add(tri.V3)).Mul(1.0 / 3.0)
+		var c float64
+		switch axis {
+		case 0:
+			c = centroid.X
+		case 1:
+			c = centroid.Y
+		case 2:
+			c = centroid.Z
+		}
+		arr[i] = triCentroid{tri: tri, centroid: c}
+	}
+	sort.Slice(arr, func(i, j int) bool {
+		return arr[i].centroid < arr[j].centroid
+	})
+	mid := len(arr) / 2
+	leftTris := make([]types.Triangle, mid)
+	rightTris := make([]types.Triangle, len(arr)-mid)
+	for i, v := range arr {
+		if i < mid {
+			leftTris[i] = v.tri
+		} else {
+			rightTris[i-mid] = v.tri
+		}
+	}
+	node.left = buildBVHRecursive(leftTris)
+	node.right = buildBVHRecursive(rightTris)
+	return node
+}
+
+// RayIntersectionDistance traverses the BVH and returns the smallest hit distance
+// (if any) along the ray defined by origin and dir. If no hit is found before maxT,
+// it returns maxT and false.
+func (node *BVHNode) RayIntersectionDistance(origin, dir r3.Vector, maxT float64) (float64, bool) {
+	// First check if the ray even intersects this node's bounding box.
+	if !node.bbox.IntersectRay(origin, dir, maxT) {
+		return maxT, false
+	}
+
+	// If this is a leaf node, check all triangles.
+	if len(node.triangles) > 0 {
+		closestT := maxT
+		hitFound := false
+		for _, tri := range node.triangles {
+			if t, hit := rayIntersectionDistanceTriangle(origin, dir, tri); hit && t < closestT {
+				closestT = t
+				hitFound = true
+			}
+		}
+		return closestT, hitFound
+	}
+
+	// Otherwise, traverse both children.
+	leftT, leftHit := maxT, false
+	if node.left != nil {
+		leftT, leftHit = node.left.RayIntersectionDistance(origin, dir, maxT)
+		// Update maxT if we found a hit on the left.
+		if leftHit {
+			maxT = leftT
+		}
+	}
+
+	rightT, rightHit := maxT, false
+	if node.right != nil {
+		rightT, rightHit = node.right.RayIntersectionDistance(origin, dir, maxT)
+	}
+
+	// Return the closer hit (if any).
+	if leftHit && rightHit {
+		if leftT < rightT {
+			return leftT, true
+		}
+		return rightT, true
+	} else if leftHit {
+		return leftT, true
+	} else if rightHit {
+		return rightT, true
+	}
+	return maxT, false
+}
+
+// rayIntersectionDistanceTriangle is similar to rayIntersectsTriangle but returns the distance t.
+func rayIntersectionDistanceTriangle(origin, direction r3.Vector, tri types.Triangle) (float64, bool) {
+	const EPSILON = 1e-5
+	edge1 := tri.V2.Sub(tri.V1)
+	edge2 := tri.V3.Sub(tri.V1)
+
+	h := direction.Cross(edge2)
+	a := edge1.Dot(h)
+	if a > -EPSILON && a < EPSILON {
+		return 0, false
+	}
+
+	f := 1.0 / a
+	s := origin.Sub(tri.V1)
+	u := f * s.Dot(h)
+	if u < 0.0 || u > 1.0 {
+		return 0, false
+	}
+
+	q := s.Cross(edge1)
+	v := f * direction.Dot(q)
+	if v < 0.0 || (u+v) > 1.0 {
+		return 0, false
+	}
+
+	t := f * edge2.Dot(q)
+	if t > EPSILON {
+		return t, true
+	}
+	return 0, false
+}
+
+// RayIntersects traverses the BVH and returns true if any triangle is intersected
+// along the ray (origin, dir) with intersection parameter less than maxT.
+func (node *BVHNode) RayIntersects(origin, dir r3.Vector, maxT float64) bool {
+	if !node.bbox.IntersectRay(origin, dir, maxT) {
+		return false
+	}
+	if len(node.triangles) > 0 {
+		for _, tri := range node.triangles {
+			if rayIntersectsTriangle(origin, dir, tri) {
+				// In a production version you might also compute the hit distance and
+				// return early only if it is less than maxT.
+				return true
+			}
+		}
+		return false
+	}
+	if node.left != nil && node.left.RayIntersects(origin, dir, maxT) {
+		return true
+	}
+	if node.right != nil && node.right.RayIntersects(origin, dir, maxT) {
+		return true
+	}
 	return false
 }
 

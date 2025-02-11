@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/trace"
 
 	"github.com/richardkiene/cs2analyst/analyzer"
 	"github.com/richardkiene/cs2analyst/collector"
@@ -82,6 +83,18 @@ func run(cfg *config) error {
 		return fmt.Errorf("invalid log level: %v", err)
 	}
 
+	if logLevel.Level() == slog.LevelDebug {
+		f, err := os.Create("trace.out")
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		if err := trace.Start(f); err != nil {
+			panic(err)
+		}
+		defer trace.Stop()
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
@@ -113,6 +126,7 @@ func run(cfg *config) error {
 }
 
 func main() {
+
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

@@ -202,6 +202,7 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 		pTick.Money = player.Money()
 		pTick.CurrentRoundMoneySpent = player.MoneySpentThisRound()
 		pTick.CurrentMoneySpentTotal = player.MoneySpentTotal()
+		pTick.DemoTime = c.parser.CurrentTime()
 
 		c.PerTickInfo[currentTick][player.SteamID64] = pTick
 	}
