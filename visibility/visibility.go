@@ -434,7 +434,7 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 
 func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
 	const maxWindowTicks = 320
-	var allowedGap = 8 // maximum number of consecutive ticks where visibility can be missing
+	var allowedGap = 64 //8 // maximum number of consecutive ticks where visibility can be missing
 
 	var candidateTick = -1
 	var candidateTime time.Duration
@@ -477,11 +477,17 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 
 		shooterTick, ok := playerData[playerID]
 
-		// TODO: INVESTIGATE THIS HACK IT MAY NOT BE WHAT WE WANT
-		flashedTicksRemaining := shooterTick.FlashedTimeRemaining.Milliseconds() / 15 // hack to get ticks per millisecond
-		allowedGap += int(flashedTicksRemaining)
+		// If the shooter is blind, don't count it as a gap in visibility
+		if shooterTick.IsBlinded {
+			//reset gapCount since the player was flashed
+			gapCount = 0
+			if debugEnabled {
+				slog.Debug("Reset and skip gapCount because shooter was blind.", "gapCount", gapCount)
+			}
+			continue
+		}
 
-		if !ok || !shooterTick.IsAlive || shooterTick.IsBlinded {
+		if !ok || !shooterTick.IsAlive {
 			gapCount++
 			if debugEnabled {
 				slog.Debug("Shooter data missing or invalid", "tick", tick, "shooterTick", shooterTick, "gapCount", gapCount)
