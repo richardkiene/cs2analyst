@@ -435,62 +435,110 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
 	const maxWindowTicks = 320
 	const allowedGap = 8 // maximum number of consecutive ticks where visibility can be missing
+
 	var candidateTick = -1
 	var candidateTime time.Duration
 	var candidateShooterPos, candidateVictimPos r3.Vector
 
-	if currentTick == 44176 {
-		slog.Debug("calling FindLastContinuousVisibilityStart for tick 44176",
-			"perTickInfo[44176][76561198237889474]", perTickInfo[44176][76561198237889474],
-			"perTickInfo[44176][76561197991944713]", perTickInfo[44176][76561197991944713],
-		)
+	// Only log debug messages if the shooter matches the specified SteamID.
+	debugEnabled := (playerID == 76561197991944713)
+
+	if debugEnabled {
+		slog.Debug("FindLastContinuousVisibilityStart called",
+			"playerID", playerID,
+			"targetID", targetID,
+			"currentTick", currentTick,
+			"maxWindowTicks", maxWindowTicks,
+			"allowedGap", allowedGap)
 	}
 
 	gapCount := 0
-	// Start at currentTick and move backwards, but only up to maxWindowTicks
+	// Iterate backwards from currentTick, but only up to maxWindowTicks
 	for tick := currentTick; tick >= 0 && (currentTick-tick) <= maxWindowTicks; tick-- {
+		if debugEnabled {
+			slog.Debug("Processing tick", "tick", tick, "currentTick", currentTick)
+		}
+
 		playerData, ok := perTickInfo[tick]
 		if !ok {
 			gapCount++
-			if gapCount > allowedGap {
-				break
+			if debugEnabled {
+				slog.Debug("No player data for tick", "tick", tick, "gapCount", gapCount)
 			}
-			continue
-		}
-		shooterTick, ok := playerData[playerID]
-		if !ok || !shooterTick.IsAlive || shooterTick.IsBlinded {
-			gapCount++
 			if gapCount > allowedGap {
-				break
-			}
-			continue
-		}
-		targetTick, ok := playerData[targetID]
-		if !ok || !targetTick.IsAlive {
-			gapCount++
-			if gapCount > allowedGap {
+				if debugEnabled {
+					slog.Debug("Allowed gap exceeded (missing data), breaking", "tick", tick, "gapCount", gapCount)
+				}
 				break
 			}
 			continue
 		}
 
-		canSeeTarget, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, currentTick)
+		shooterTick, ok := playerData[playerID]
+		if !ok || !shooterTick.IsAlive || shooterTick.IsBlinded {
+			gapCount++
+			if debugEnabled {
+				slog.Debug("Shooter data missing or invalid", "tick", tick, "shooterTick", shooterTick, "gapCount", gapCount)
+			}
+			if gapCount > allowedGap {
+				if debugEnabled {
+					slog.Debug("Allowed gap exceeded (shooter data), breaking", "tick", tick, "gapCount", gapCount)
+				}
+				break
+			}
+			continue
+		}
+
+		targetTick, ok := playerData[targetID]
+		if !ok || !targetTick.IsAlive {
+			gapCount++
+			if debugEnabled {
+				slog.Debug("Target data missing or target not alive", "tick", tick, "targetTick", targetTick, "gapCount", gapCount)
+			}
+			if gapCount > allowedGap {
+				if debugEnabled {
+					slog.Debug("Allowed gap exceeded (target data), breaking", "tick", tick, "gapCount", gapCount)
+				}
+				break
+			}
+			continue
+		}
+
+		// Use the loop variable tick when checking LOS so that the positions from that tick are used.
+		canSeeTarget, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, tick)
+		if debugEnabled {
+			slog.Debug("Tick visibility check", "tick", tick, "canSeeTarget", canSeeTarget, "gapCount", gapCount)
+		}
+
 		if canSeeTarget {
-			// Found a visible tick—update candidate and reset gap counter
+			// Found a visible tick—update candidate and reset gap counter.
 			candidateTick = tick
 			candidateTime = shooterTick.DemoTime
 			candidateShooterPos = shooterTick.Position
 			candidateVictimPos = targetTick.Position
+			if debugEnabled {
+				slog.Debug("Visibility found", "tick", tick, "candidateTick", candidateTick,
+					"shooterPos", candidateShooterPos, "targetPos", candidateVictimPos)
+			}
 			gapCount = 0
 		} else {
 			gapCount++
+			if debugEnabled {
+				slog.Debug("No visibility at tick", "tick", tick, "gapCount", gapCount)
+			}
 			if gapCount > allowedGap {
+				if debugEnabled {
+					slog.Debug("Allowed gap exceeded after non-visible tick, breaking", "tick", tick, "gapCount", gapCount)
+				}
 				break
 			}
 		}
 	}
 
 	if candidateTick != -1 {
+		if debugEnabled {
+			slog.Debug("Returning visibility result", "StartTick", candidateTick, "StartTime", candidateTime)
+		}
 		return VisibilityResult{
 			StartTick:  candidateTick,
 			StartTime:  candidateTime,
@@ -498,6 +546,9 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 			ShooterPos: candidateShooterPos,
 			VictimPos:  candidateVictimPos,
 		}, true
+	}
+	if debugEnabled {
+		slog.Debug("No continuous visibility found")
 	}
 	return VisibilityResult{}, false
 }
@@ -578,10 +629,15 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 			"forward", fmt.Sprintf("(%.2f, %.2f, %.2f)", forward.X, forward.Y, forward.Z))
 	}
 
+	// Assume targetModel is the target's player model that includes the offset
+	// HACK TO SEE IF THIS ADJUSTING WORKS
+	headOffset := 72.0 / 2 // roughtly the waist? https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive/Mapper%27s_Reference
+	adjustedTargetPos := target.Position.Add(r3.Vector{X: 0, Y: 0, Z: headOffset})
+
 	// First, check if any candidate point is roughly in the shooter's field of view.
 	anyInFOV := false
 	for _, bp := range points {
-		wp := target.Position.Add(bp)
+		wp := adjustedTargetPos.Add(bp)
 		if shooter.IsInFieldOfViewFromEye(wp, eyePos) {
 			anyInFOV = true
 			break
@@ -603,7 +659,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 
 	// For each candidate point that passes the FOV test, perform a detailed line-of-sight test.
 	for i, bp := range points {
-		wp := target.Position.Add(bp)
+		wp := adjustedTargetPos.Add(bp)
 		// Check again using the precise FOV test.
 		if !shooter.IsInFieldOfViewFromEye(wp, eyePos) {
 			continue
@@ -647,6 +703,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 			margin = tolerance
 		}
 
+		const minMargin = 5.0 // adjust this threshold as needed
 		if debugEnabled {
 			slog.Debug("Computed margin",
 				"point_index", i,
@@ -659,6 +716,12 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 				slog.Debug("Candidate occluded",
 					"point_index", i,
 					"margin", margin)
+			}
+			continue
+		} else if margin < minMargin {
+			if debugEnabled {
+				slog.Debug("Candidate rejected due to insufficient margin",
+					"point_index", i, "margin", margin, "minMargin", minMargin)
 			}
 			continue
 		} else {
