@@ -60,23 +60,25 @@ type PlayerTickData struct {
 	DemoTime               time.Duration
 }
 
-// ForwardVector computes the direction the player is looking in Source2 coords:
-// (X=forward, Y=left, Z=up). We also fix the pitch range 270..360 => -90..0.
 func (p *PlayerTickData) ForwardVector() r3.Vector {
-	rawYaw := float64(p.ViewAngleX)   // 0..360
-	rawPitch := float64(p.ViewAngleY) // 270..90 => remap >180 => negative
+	// Convert angles to radians
+	yaw := float64(p.ViewAngleX) * (math.Pi / 180)
+	pitch := float64(p.ViewAngleY)
 
-	if rawPitch > 180 {
-		rawPitch -= 360
+	// Correct pitch range: 270..360 => -90..0
+	if pitch > 180 {
+		pitch -= 360
 	}
+	pitch = pitch * (math.Pi / 180)
 
-	yaw := rawYaw * (math.Pi / 180)
-	pitch := rawPitch * (math.Pi / 180)
-
+	// Source coordinate system:
+	// X is forward/East
+	// Y is left/North
+	// Z is up
 	return r3.Vector{
-		X: math.Cos(pitch) * math.Sin(yaw),
-		Y: math.Cos(pitch) * math.Cos(yaw),
-		Z: math.Sin(pitch),
+		X: math.Cos(pitch) * math.Cos(yaw), // Forward/East
+		Y: math.Cos(pitch) * math.Sin(yaw), // Left/North
+		Z: -math.Sin(pitch),                // Up
 	}.Normalize()
 }
 

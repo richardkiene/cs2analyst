@@ -3,6 +3,7 @@ package visibility
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -38,15 +39,68 @@ Kd 1.0 1.0 0.0
 Ks 1.0 1.0 1.0
 d 0.3
 illum 2
+
+newmtl hit_material
+Ka 0.2 0.2 0.2
+Kd 1.0 0.0 0.0
+Ks 1.0 1.0 1.0
+d 1.0
 `
-	mtlPath := filepath.Join(outputDir, "debug_materials.mtl")
-	return os.WriteFile(mtlPath, []byte(mtlContent), 0644)
+	return os.WriteFile(filepath.Join(outputDir, "debug_materials.mtl"), []byte(mtlContent), 0644)
+}
+
+// WriteSphere writes a simple sphere to the OBJ file at the given center point
+func WriteSphere(w io.Writer, center r3.Vector, radius float64, segments int, material string, vertexIndex *int) {
+	fmt.Fprintf(w, "\no hit_point\n")
+	fmt.Fprintf(w, "usemtl %s\n", material)
+
+	// Generate vertices
+	vertices := make([]r3.Vector, 0)
+
+	// Generate vertices for a UV sphere
+	for phi := 0.0; phi <= math.Pi; phi += math.Pi / float64(segments) {
+		for theta := 0.0; theta < 2*math.Pi; theta += 2 * math.Pi / float64(segments) {
+			x := radius * math.Sin(phi) * math.Cos(theta)
+			y := radius * math.Sin(phi) * math.Sin(theta)
+			z := radius * math.Cos(phi)
+
+			vertex := r3.Vector{
+				X: center.X + x,
+				Y: center.Y + y,
+				Z: center.Z + z,
+			}
+			vertices = append(vertices, vertex)
+			fmt.Fprintf(w, "v %.6f %.6f %.6f\n", vertex.X, vertex.Y, vertex.Z)
+		}
+	}
+
+	// Add top and bottom vertices
+	topVertex := r3.Vector{X: center.X, Y: center.Y, Z: center.Z + radius}
+	bottomVertex := r3.Vector{X: center.X, Y: center.Y, Z: center.Z - radius}
+	vertices = append(vertices, topVertex, bottomVertex)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", topVertex.X, topVertex.Y, topVertex.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", bottomVertex.X, bottomVertex.Y, bottomVertex.Z)
+
+	// Generate faces
+	for i := 0; i < segments; i++ {
+		for j := 0; j < segments; j++ {
+			v1 := i*segments + j + *vertexIndex
+			v2 := i*segments + ((j + 1) % segments) + *vertexIndex
+			v3 := ((i+1)%segments)*segments + j + *vertexIndex
+			v4 := ((i+1)%segments)*segments + ((j + 1) % segments) + *vertexIndex
+
+			fmt.Fprintf(w, "f %d %d %d\n", v1, v2, v3)
+			fmt.Fprintf(w, "f %d %d %d\n", v2, v4, v3)
+		}
+	}
+
+	*vertexIndex += len(vertices)
 }
 
 // WriteCone draws a cone from `apex` to `base` with `baseRadius`, using a given material name.
 // NOTE: Only define this function once!
 func WriteCone(
-	f *os.File,
+	w io.Writer,
 	apex, base r3.Vector,
 	baseRadius float64,
 	material string,
@@ -55,11 +109,11 @@ func WriteCone(
 	segments := 16
 
 	// Start a new object
-	fmt.Fprintf(f, "\no debug_cone\n")
-	fmt.Fprintf(f, "usemtl %s\n", material)
+	fmt.Fprintf(w, "\no debug_cone\n")
+	fmt.Fprintf(w, "usemtl %s\n", material)
 
 	// apex
-	fmt.Fprintf(f, "v %.6f %.6f %.6f\n", apex.X, apex.Y, apex.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", apex.X, apex.Y, apex.Z)
 	apexIdx := *vertexIndex
 	*vertexIndex++
 
@@ -80,7 +134,7 @@ func WriteCone(
 		sinA := math.Sin(angle) * baseRadius
 		pt := base.Add(u.Mul(cosA)).Add(v.Mul(sinA))
 
-		fmt.Fprintf(f, "v %.6f %.6f %.6f\n", pt.X, pt.Y, pt.Z)
+		fmt.Fprintf(w, "v %.6f %.6f %.6f\n", pt.X, pt.Y, pt.Z)
 		baseVerts[i] = *vertexIndex
 		*vertexIndex++
 	}
@@ -88,15 +142,15 @@ func WriteCone(
 	// side faces
 	for i := 0; i < segments; i++ {
 		next := (i + 1) % segments
-		fmt.Fprintf(f, "f %d %d %d\n", apexIdx, baseVerts[i], baseVerts[next])
+		fmt.Fprintf(w, "f %d %d %d\n", apexIdx, baseVerts[i], baseVerts[next])
 	}
 
 	// base face
-	fmt.Fprintf(f, "f")
+	fmt.Fprintf(w, "f")
 	for i := segments - 1; i >= 0; i-- {
-		fmt.Fprintf(f, " %d", baseVerts[i])
+		fmt.Fprintf(w, " %d", baseVerts[i])
 	}
-	fmt.Fprintf(f, "\n")
+	fmt.Fprintf(w, "\n")
 }
 
 // CreateShooterCentricFOVUsingTargetDistance is your partial-geometry debug function
@@ -110,6 +164,7 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	fovDegrees float64,
 	extraPadding float64,
 	includeCone bool,
+	hitPoints []r3.Vector,
 ) error {
 	// 1) compute distance to target, define maxDistance
 	distToTarget := distanceToShooter(shooter, target.Position)
@@ -177,6 +232,8 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	}
 
 	// 4) cull map geometry by distance & FOV
+	eyePos := GetEyePosition(shooter, playerModel)
+
 	fmt.Fprintf(writer, "\no partial_map\n")
 	fmt.Fprintf(writer, "usemtl map_material\n")
 
@@ -189,9 +246,9 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		distB := distanceToShooter(shooter, vB)
 		distC := distanceToShooter(shooter, vC)
 
-		inFOVA := isInFOV(shooter, vA, fovDegrees)
-		inFOVB := isInFOV(shooter, vB, fovDegrees)
-		inFOVC := isInFOV(shooter, vC, fovDegrees)
+		inFOVA := shooter.IsInFieldOfViewFromEye(vA, eyePos)
+		inFOVB := shooter.IsInFieldOfViewFromEye(vB, eyePos)
+		inFOVC := shooter.IsInFieldOfViewFromEye(vC, eyePos)
 
 		keep := false
 		if (distA <= maxDistance && inFOVA) ||
@@ -217,62 +274,30 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		fmt.Fprintf(writer, "\no debug_cone\n")
 		fmt.Fprintf(writer, "usemtl cone_material\n")
 
-		apex := r3.Vector{0, 0, 0} // local shooter origin
-		forwardDir := shooter.ForwardVector()
+		// Here, instead of using a hacky constant for eye height, you might want to use the computed eyePos.
+		// In shooter-centric space, the shooter's eye becomes:
+		localEyePos := transformPosition(eyePos)
 
-		// The “distance” of the cone is your final desired length
-		// e.g. from the shooter to target plus padding
+		// Compute the cone length (distance from shooter to target plus padding).
 		coneLength := distToTarget + extraPadding
 
-		// Convert fovDegrees to half-angle in radians
+		// Convert the passed-in fovDegrees to a half-angle in radians.
 		halfAngleRadians := (fovDegrees / 2.0) * (math.Pi / 180.0)
 		baseRadius := coneLength * math.Tan(halfAngleRadians)
 
-		// base = apex + forwardDir * coneLength
-		base := apex.Add(forwardDir.Mul(coneLength))
+		// Cone apex will be at the shooter’s eye position (localEyePos).
+		// For the cone direction, we use the shooter’s forward vector.
+		forwardDir := shooter.ForwardVector()
+		base := localEyePos.Add(forwardDir.Mul(coneLength))
 
-		// apex
-		fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", apex.X, apex.Y, apex.Z)
-		apexIdx := vertexIndex
-		vertexIndex++
+		WriteCone(writer, localEyePos, base, baseRadius, "cone_material", &vertexIndex)
+	}
 
-		// The rest is mostly the same, just plugging in baseRadius
-		segments := 16
-		dir := base.Sub(apex).Normalize()
-
-		var u r3.Vector
-		up := r3.Vector{0, 0, 1}
-		if math.Abs(dir.Z) > 0.99 {
-			u = r3.Vector{1, 0, 0}
-		} else {
-			u = dir.Cross(up).Normalize()
-		}
-		crossV := dir.Cross(u).Normalize()
-
-		baseVerts := make([]int, segments)
-		for i := 0; i < segments; i++ {
-			angle := 2 * math.Pi * float64(i) / float64(segments)
-			cosA := math.Cos(angle) * baseRadius
-			sinA := math.Sin(angle) * baseRadius
-			pt := base.Add(u.Mul(cosA)).Add(crossV.Mul(sinA))
-
-			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", pt.X, pt.Y, pt.Z)
-			baseVerts[i] = vertexIndex
-			vertexIndex++
-		}
-
-		// side faces
-		for i := 0; i < segments; i++ {
-			next := (i + 1) % segments
-			fmt.Fprintf(writer, "f %d %d %d\n", apexIdx, baseVerts[i], baseVerts[next])
-		}
-
-		// base face
-		fmt.Fprintf(writer, "f")
-		for i := segments - 1; i >= 0; i-- {
-			fmt.Fprintf(writer, " %d", baseVerts[i])
-		}
-		fmt.Fprintf(writer, "\n")
+	// 6) Add hit points visualization
+	for _, hitPoint := range hitPoints {
+		// Transform hit point to shooter-centric space
+		localHitPoint := transformPosition(hitPoint)
+		WriteSphere(writer, localHitPoint, 5.0, 8, "hit_material", &vertexIndex)
 	}
 
 	return nil
@@ -288,6 +313,7 @@ func CreateDebugOBJ(
 	eyePos, targetPos r3.Vector,
 	includeMap bool,
 	coneRadius float64,
+	hitPoints []r3.Vector,
 ) error {
 	outDir := "debug_visibility"
 	if err := os.MkdirAll(outDir, os.ModePerm); err != nil {
@@ -355,9 +381,13 @@ func CreateDebugOBJ(
 		}
 	}
 
-	// optional cone from eye->target
 	if coneRadius > 0.0 {
 		WriteCone(f, eyePos, targetPos, coneRadius, "cone_material", &vertexIndex)
+	}
+
+	// Add hit points visualization
+	for _, hitPoint := range hitPoints {
+		WriteSphere(f, hitPoint, 5.0, 8, "hit_material", &vertexIndex)
 	}
 
 	return nil

@@ -216,17 +216,19 @@ func (a *Analyzer) GenerateDebugVisualization(
 		return fmt.Errorf("either shooter or target is not alive at tick %d", tick)
 	}
 
-	// Use the existing CreateShooterCentricFOVUsingTargetDistance from visibility package
-	// Using same 200 degree FOV (effectiveHalfFOV * 2) from CanSeeTarget function
+	// Get hit points by calling CanSeeTarget
+	_, hitPoints := visibility.CanSeeTarget(shooter, target, a.visibility.LosSystem.PlayerModel, a.visibility.LosSystem.MapModel, tick)
+
 	err := visibility.CreateShooterCentricFOVUsingTargetDistance(
 		tick,
 		a.visibility.LosSystem.MapModel,
 		a.visibility.LosSystem.PlayerModel,
 		shooter,
 		target,
-		200.0, // FOV degrees - matching CanSeeTarget's effectiveHalfFOV * 2
-		0.0,   // No extra padding - we want to see exactly what the system sees
-		true,  // Include debug cone
+		200.0,
+		0.0,
+		true,
+		hitPoints,
 	)
 
 	if err != nil {

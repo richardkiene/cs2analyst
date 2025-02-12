@@ -274,6 +274,22 @@ func (m *Model) addTriangleToSectors(t types.Triangle) {
 	}
 }
 
+// Computes the eye position using the player model’s full height (i.e. the
+// difference between playerModel.max.Z and playerModel.min.Z). This assumes that
+// shooter.Position represents the feet.
+func GetEyePosition(shooter types.PlayerTickData, playerModel *Model) r3.Vector {
+	height := playerModel.max.Z - playerModel.min.Z
+	eyeHeight := height * 0.85
+	if shooter.IsCrouched {
+		eyeHeight *= 0.75
+	}
+	return r3.Vector{
+		X: shooter.Position.X,
+		Y: shooter.Position.Y,
+		Z: shooter.Position.Z + eyeHeight,
+	}
+}
+
 // GetRelevantMapGeometry returns triangles along the line from start->end
 func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 	visited := make(map[gridKey]bool, 128)
@@ -423,6 +439,13 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	var candidateTime time.Duration
 	var candidateShooterPos, candidateVictimPos r3.Vector
 
+	if currentTick == 44176 {
+		slog.Debug("calling FindLastContinuousVisibilityStart for tick 44176",
+			"perTickInfo[44176][76561198237889474]", perTickInfo[44176][76561198237889474],
+			"perTickInfo[44176][76561197991944713]", perTickInfo[44176][76561197991944713],
+		)
+	}
+
 	gapCount := 0
 	// Start at currentTick and move backwards, but only up to maxWindowTicks
 	for tick := currentTick; tick >= 0 && (currentTick-tick) <= maxWindowTicks; tick-- {
@@ -450,7 +473,9 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 			}
 			continue
 		}
-		if CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, -1) {
+
+		canSeeTarget, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, currentTick)
+		if canSeeTarget {
 			// Found a visible tick—update candidate and reset gap counter
 			candidateTick = tick
 			candidateTime = shooterTick.DemoTime
@@ -523,111 +548,141 @@ func (m *Model) GetVisibilityPoints() []r3.Vector {
 }
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye
-func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) bool {
-	// 1) Compute the shooter’s eye position.
-	eyeHeight := playerModel.max.Z * 0.85
-	if shooter.IsCrouched {
-		eyeHeight *= 0.75
-	}
-	eyePos := r3.Vector{
-		X: shooter.Position.X,
-		Y: shooter.Position.Y,
-		Z: shooter.Position.Z + eyeHeight,
+// CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye.
+func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) (bool, []r3.Vector) {
+	var hitPoints []r3.Vector
+	// Enable extra debug logging for a specific tick (change as needed).
+	debugEnabled := (tick == 44176)
+
+	// Compute the shooter's eye position.
+	eyePos := GetEyePosition(shooter, playerModel)
+	if debugEnabled {
+		slog.Debug("Raw player data",
+			"tick", tick,
+			"shooter_id", shooter.SteamID,
+			"shooter_yaw", shooter.ViewAngleX,
+			"shooter_pitch", shooter.ViewAngleY,
+			"shooter_pos", fmt.Sprintf("(%.2f, %.2f, %.2f)", shooter.Position.X, shooter.Position.Y, shooter.Position.Z),
+			"target_id", target.SteamID,
+			"target_pos", fmt.Sprintf("(%.2f, %.2f, %.2f)", target.Position.X, target.Position.Y, target.Position.Z))
+		slog.Debug("Eye position",
+			"eye_pos", fmt.Sprintf("(%.2f, %.2f, %.2f)", eyePos.X, eyePos.Y, eyePos.Z),
+			"is_crouched", shooter.IsCrouched)
 	}
 
-	// 2) Use a relaxed FOV threshold.
-	effectiveHalfFOV := 100.0
-	cosThreshold := math.Cos(effectiveHalfFOV * math.Pi / 180.0)
-
-	// 3) Get candidate visibility points.
+	// Get candidate visibility points.
 	points := playerModel.GetVisibilityPoints()
 	forward := shooter.ForwardVector()
+	if debugEnabled {
+		slog.Debug("Forward vector",
+			"forward", fmt.Sprintf("(%.2f, %.2f, %.2f)", forward.X, forward.Y, forward.Z))
+	}
 
-	// Check if any candidate is roughly in the shooter’s FOV.
+	// First, check if any candidate point is roughly in the shooter's field of view.
 	anyInFOV := false
 	for _, bp := range points {
 		wp := target.Position.Add(bp)
-		toTarget := wp.Sub(eyePos).Normalize()
-		if forward.Dot(toTarget) >= cosThreshold {
+		if shooter.IsInFieldOfViewFromEye(wp, eyePos) {
 			anyInFOV = true
 			break
 		}
 	}
 	if !anyInFOV {
-		return false
+		if debugEnabled {
+			slog.Debug("No candidate points in FOV", "shooter_id", shooter.SteamID, "target_id", target.SteamID)
+		}
+		return false, hitPoints
 	}
 
-	// Initialize our LOS aggregator for the shooter of interest.
-	// TODO: Remove this debug code
+	// (Optional) Initialize LOS aggregator if the shooter is the one we want to debug.
 	var losStats *LosStats
 	shooterOfInterest := uint64(76561197991944713)
 	if shooter.SteamID == shooterOfInterest {
 		losStats = NewLosStats()
 	}
 
-	// 4) For each candidate that passes the FOV test, do a detailed LOS test.
-	for _, bp := range points {
+	// For each candidate point that passes the FOV test, perform a detailed line-of-sight test.
+	for i, bp := range points {
 		wp := target.Position.Add(bp)
-		toTarget := wp.Sub(eyePos).Normalize()
-		if forward.Dot(toTarget) < cosThreshold {
-			continue // Skip candidates outside the FOV.
+		// Check again using the precise FOV test.
+		if !shooter.IsInFieldOfViewFromEye(wp, eyePos) {
+			continue
 		}
 
-		// Compute ray direction and distance.
 		rayDir := wp.Sub(eyePos).Normalize()
 		distToCandidate := wp.Sub(eyePos).Norm()
+		// Set a tolerance of 5% of the candidate distance.
+		tolerance := distToCandidate * 0.05
 
-		// 5) Compute a tolerance (5% of the candidate distance).
-		//tolerance := distToCandidate * 0.05
-		tolerance := distToCandidate * 0.10
-
-		// 6) Query the BVH for the nearest intersection distance.
-		hitT, hitFound := mapModel.bvh.RayIntersectionDistance(eyePos, rayDir, math.MaxFloat64)
-
-		// Calculate the delta.
-		delta := distToCandidate - (hitT + tolerance)
-
-		// If this is our shooter of interest, update the aggregate stats.
-		if shooter.SteamID == shooterOfInterest {
-			// Consider a candidate borderline if delta is between 0 and 0.05 * distToCandidate.
-			// (You can adjust this fraction as needed.)
-			borderlineThreshold := distToCandidate * 0.05
-			losStats.UpdateLosStats(delta, borderlineThreshold)
+		if debugEnabled {
+			slog.Debug("Testing candidate",
+				"point_index", i,
+				"wp", fmt.Sprintf("(%.2f, %.2f, %.2f)", wp.X, wp.Y, wp.Z),
+				"distToCandidate", distToCandidate,
+				"tolerance", tolerance)
 		}
 
-		// 7) Log detailed candidate info for debugging. (Keep it to only a single shooter because this output is huge for all shooters ~50GB)
-		/*if shooter.SteamID == 76561197991944713 {
-			slog.Debug("LOS candidate test",
-				"shooter", shooter.SteamID,
-				"shooter position X", shooter.Position.X,
-				"shooter position Y", shooter.Position.Y,
-				"target", target.SteamID,
-				"target position X", target.Position.X,
-				"target position Y", target.Position.Y,
-				"eyePos", eyePos,
-				"candidatePoint", wp,
-				"distToCandidate", distToCandidate,
+		// Perform the ray intersection test using the BVH.
+		hitT, hitFound := mapModel.bvh.RayIntersectionDistance(eyePos, rayDir, math.MaxFloat64)
+		if debugEnabled {
+			slog.Debug("Ray intersection result",
+				"point_index", i,
 				"hitFound", hitFound,
 				"hitT", hitT,
-				"tolerance", tolerance)
-		}*/
+				"hitT+tolerance", hitT+tolerance)
+		}
 
-		// 8) Decision: if a hit is found and occurs significantly before the candidate point, this candidate is blocked.
+		// If a hit was found, calculate and record the hit point.
+		if hitFound {
+			hitPoint := eyePos.Add(rayDir.Mul(hitT))
+			hitPoints = append(hitPoints, hitPoint)
+		}
+
+		// Compute a margin: the extra distance allowed (hitT + tolerance minus the candidate distance).
+		var margin float64
+		if hitFound {
+			margin = (hitT + tolerance) - distToCandidate
+		} else {
+			// If no hit was found, we assume the candidate is visible with a margin equal to the tolerance.
+			margin = tolerance
+		}
+
+		if debugEnabled {
+			slog.Debug("Computed margin",
+				"point_index", i,
+				"margin", margin)
+		}
+
+		// Decision: if a hit was found and the intersection occurs before reaching the candidate, the candidate is occluded.
 		if hitFound && (hitT+tolerance) < distToCandidate {
-			// Candidate is blocked; try the next candidate.
+			if debugEnabled {
+				slog.Debug("Candidate occluded",
+					"point_index", i,
+					"margin", margin)
+			}
 			continue
 		} else {
-			// Either no hit was found or the hit is very near or beyond the candidate.
-			return true
+			// Optionally update LOS aggregator for the shooter of interest.
+			if shooter.SteamID == shooterOfInterest {
+				losStats.UpdateLosStats(margin, tolerance)
+				slog.Debug("LOS aggregate stats for shooter", "stats", losStats.Summary())
+			}
+			if debugEnabled {
+				slog.Debug("Visibility confirmed",
+					"point_index", i,
+					"shooter_id", shooter.SteamID,
+					"target_id", target.SteamID,
+					"margin", margin)
+			}
+			// Return immediately on the first candidate that is deemed visible.
+			return true, hitPoints
 		}
 	}
 
-	// If we're processing our shooter of interest, output the aggregated stats.
-	if shooter.SteamID == shooterOfInterest && losStats != nil {
-		slog.Info("LOS aggregate stats for shooter", "stats", losStats.Summary())
+	if debugEnabled {
+		slog.Debug("No visibility found", "shooter_id", shooter.SteamID, "target_id", target.SteamID)
 	}
-
-	return false
+	return false, hitPoints
 }
 
 // NewAABBFromTriangle computes an AABB for a triangle.
@@ -887,33 +942,17 @@ func (node *BVHNode) RayIntersects(origin, dir r3.Vector, maxT float64) bool {
 	return false
 }
 
-func DebugEyePosConsole(
-	shooter types.PlayerTickData,
-	playerModel *Model,
-) {
-	// 1) Calculate bounding-box height
+func DebugEyePosConsole(shooter types.PlayerTickData, playerModel *Model) {
+	eyePos := GetEyePosition(shooter, playerModel)
 	height := playerModel.max.Z - playerModel.min.Z
-
-	// 2) Our existing "eyeHeight" logic
-	eyeHeight := height * 0.85
-	if shooter.IsCrouched {
-		eyeHeight *= 0.75
-	}
-
-	// 3) Final eye pos
-	eyePos := r3.Vector{
-		X: shooter.Position.X,
-		Y: shooter.Position.Y,
-		Z: shooter.Position.Z + eyeHeight,
-	}
 
 	fmt.Printf("\n=== DebugEyePosConsole ===\n")
 	fmt.Printf("Player minZ=%.2f, maxZ=%.2f => boundingBoxHeight=%.2f\n",
 		playerModel.min.Z, playerModel.max.Z, height)
 	fmt.Printf("shooter feet= (%.2f, %.2f, %.2f)\n",
 		shooter.Position.X, shooter.Position.Y, shooter.Position.Z)
-	fmt.Printf("eyeHeight= %.2f => eyePos= (%.2f, %.2f, %.2f)\n\n",
-		eyeHeight, eyePos.X, eyePos.Y, eyePos.Z)
+	fmt.Printf("Computed eyePos= (%.2f, %.2f, %.2f)\n\n",
+		eyePos.X, eyePos.Y, eyePos.Z)
 }
 
 func distanceToShooter(shooter types.PlayerTickData, point r3.Vector) float64 {
@@ -921,14 +960,6 @@ func distanceToShooter(shooter types.PlayerTickData, point r3.Vector) float64 {
 	dy := point.Y - shooter.Position.Y
 	dz := point.Z - shooter.Position.Z
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
-}
-
-func isInFOV(shooter types.PlayerTickData, point r3.Vector, fovDegrees float64) bool {
-	toPoint := point.Sub(shooter.Position).Normalize()
-	forward := shooter.ForwardVector()
-	dot := forward.Dot(toPoint)
-	angle := math.Acos(dot) * (180 / math.Pi)
-	return angle <= fovDegrees/2
 }
 
 // basic ray intersection
