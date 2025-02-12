@@ -434,7 +434,7 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 
 func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
 	const maxWindowTicks = 320
-	const allowedGap = 8 // maximum number of consecutive ticks where visibility can be missing
+	var allowedGap = 8 // maximum number of consecutive ticks where visibility can be missing
 
 	var candidateTick = -1
 	var candidateTime time.Duration
@@ -460,6 +460,7 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		playerData, ok := perTickInfo[tick]
+
 		if !ok {
 			gapCount++
 			if debugEnabled {
@@ -475,6 +476,11 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		shooterTick, ok := playerData[playerID]
+
+		// TODO: INVESTIGATE THIS HACK IT MAY NOT BE WHAT WE WANT
+		flashedTicksRemaining := shooterTick.FlashedTimeRemaining.Milliseconds() / 15 // hack to get ticks per millisecond
+		allowedGap += int(flashedTicksRemaining)
+
 		if !ok || !shooterTick.IsAlive || shooterTick.IsBlinded {
 			gapCount++
 			if debugEnabled {
@@ -598,7 +604,40 @@ func (m *Model) GetVisibilityPoints() []r3.Vector {
 	return points
 }
 
-// CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye
+// degToRad converts degrees to radians.
+func degToRad(deg float64) float64 {
+	return deg * math.Pi / 180.0
+}
+
+// rotateAroundZ rotates a 3D vector around the Z axis by the given angle (in radians).
+func rotateAroundZ(v r3.Vector, angle float64) r3.Vector {
+	cosTheta := math.Cos(angle)
+	sinTheta := math.Sin(angle)
+	return r3.Vector{
+		X: v.X*cosTheta - v.Y*sinTheta,
+		Y: v.X*sinTheta + v.Y*cosTheta,
+		Z: v.Z, // The Z component remains the same.
+	}
+}
+
+// getCandidateWorldPoint computes the world-space candidate point based on the target’s data at that tick.
+func getCandidateWorldPoint(target types.PlayerTickData, bp r3.Vector) r3.Vector {
+
+	// HACK TO SEE IF THIS ADJUSTING WORKS
+	verticalOffset := 72.0 / 2 // The waist? https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive/Mapper%27s_Reference
+
+	// Lift the target’s reported feet position to approximate its center/hitbox.
+	targetPosAdjusted := target.Position.Add(r3.Vector{X: 0, Y: 0, Z: verticalOffset})
+
+	// Convert the target’s yaw (in degrees) to radians.
+	yawRad := degToRad(float64(target.ViewAngleX))
+
+	// Rotate the candidate offset from model space into world space.
+	rotatedOffset := rotateAroundZ(bp, yawRad)
+
+	return targetPosAdjusted.Add(rotatedOffset)
+}
+
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye.
 func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) (bool, []r3.Vector) {
 	var hitPoints []r3.Vector
@@ -629,15 +668,10 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 			"forward", fmt.Sprintf("(%.2f, %.2f, %.2f)", forward.X, forward.Y, forward.Z))
 	}
 
-	// Assume targetModel is the target's player model that includes the offset
-	// HACK TO SEE IF THIS ADJUSTING WORKS
-	headOffset := 72.0 / 2 // roughtly the waist? https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive/Mapper%27s_Reference
-	adjustedTargetPos := target.Position.Add(r3.Vector{X: 0, Y: 0, Z: headOffset})
-
 	// First, check if any candidate point is roughly in the shooter's field of view.
 	anyInFOV := false
 	for _, bp := range points {
-		wp := adjustedTargetPos.Add(bp)
+		wp := getCandidateWorldPoint(target, bp)
 		if shooter.IsInFieldOfViewFromEye(wp, eyePos) {
 			anyInFOV = true
 			break
@@ -659,7 +693,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 
 	// For each candidate point that passes the FOV test, perform a detailed line-of-sight test.
 	for i, bp := range points {
-		wp := adjustedTargetPos.Add(bp)
+		wp := getCandidateWorldPoint(target, bp)
 		// Check again using the precise FOV test.
 		if !shooter.IsInFieldOfViewFromEye(wp, eyePos) {
 			continue
