@@ -14,25 +14,29 @@ import (
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/msgs2"
 	"github.com/richardkiene/cs2analyst/types"
 	"github.com/richardkiene/cs2analyst/visibility"
+	"github.com/richardkiene/cs2analyst/weapons"
 )
 
 type Collector struct {
-	TickRate     float64
-	TickTime     time.Duration
-	mapNameFound bool
-	Match        *types.Match
-	parser       dem.Parser
-	Logger       slog.Logger
-	PerTickInfo  map[int]map[uint64]types.PlayerTickData
+	TickRate      float64
+	TickTime      time.Duration
+	mapNameFound  bool
+	Match         *types.Match
+	parser        dem.Parser
+	Logger        slog.Logger
+	PerTickInfo   map[int]map[uint64]types.PlayerTickData
+	WeaponDetails map[common.EquipmentType]weapons.WeaponDetail
 }
 
 func New() *Collector {
+	weapons, _ := weapons.ParseCS2Weapons("\\weapons\\data\\cs2_weapons.csv")
 	return &Collector{
-		Match:       NewMatch(),
-		Logger:      *slog.Default(),
-		TickRate:    -1,
-		TickTime:    -1,
-		PerTickInfo: make(map[int]map[uint64]types.PlayerTickData, 0),
+		Match:         NewMatch(),
+		Logger:        *slog.Default(),
+		TickRate:      -1,
+		TickTime:      -1,
+		PerTickInfo:   make(map[int]map[uint64]types.PlayerTickData, 0),
+		WeaponDetails: weapons,
 	}
 }
 
@@ -276,6 +280,24 @@ func (c *Collector) handleWeaponFire(e events.WeaponFire) {
 	c.PerTickInfo[currentTick][e.Shooter.SteamID64] = shooterData
 }
 
+func (c *Collector) handleWeaponReload(e events.WeaponReload) {
+	if e.Player == nil {
+		return
+	}
+	currentTick := c.parser.GameState().IngameTick()
+	if _, ok := c.PerTickInfo[currentTick]; !ok {
+		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
+	}
+
+	playerData := c.PerTickInfo[currentTick][e.Player.SteamID64]
+	playerData.IsReloading = true
+	playerData.IsMakingNoise = true
+	playerData.NoiseRadius = 200.0 // TODO: Calculate the actual instead of using a "Typical reload sound radius"
+	playerData.SoundEvents = append(playerData.SoundEvents, "reload")
+
+	c.PerTickInfo[currentTick][e.Player.SteamID64] = playerData
+}
+
 func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 	gs := c.parser.GameState()
 	currentTick := gs.IngameTick()
@@ -477,6 +499,25 @@ func (c *Collector) handlePlayerSound(e events.PlayerSound) {
 	if e.Duration > 0 {
 		playerData.SoundEvents = append(playerData.SoundEvents, "step")
 	}
+
+	c.PerTickInfo[currentTick][e.Player.SteamID64] = playerData
+}
+
+func (c *Collector) handleFootstep(e events.Footstep) {
+	if e.Player == nil {
+		return
+	}
+	currentTick := c.parser.GameState().IngameTick()
+	if _, ok := c.PerTickInfo[currentTick]; !ok {
+		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
+	}
+
+	playerData := c.PerTickInfo[currentTick][e.Player.SteamID64]
+	playerData.IsMakingNoise = true
+	playerData.NoiseRadius = 350.0 // Typical footstep sound radius
+	playerData.LastStepTick = currentTick
+	playerData.StepCount++
+	playerData.SoundEvents = append(playerData.SoundEvents, "footstep")
 
 	c.PerTickInfo[currentTick][e.Player.SteamID64] = playerData
 }
@@ -751,12 +792,10 @@ func (c *Collector) handleItemEquip(e events.ItemEquip) {
 
 	// Update equipped weapons
 	switch e.Weapon.Class() {
-	case common.EqClassPistols, common.EqClassSMG, common.EqClassRifle, common.EqClassSniper:
-		if e.Weapon.Class() == common.EqClassPistols {
-			playerData.SecondaryWeapon = e.Weapon
-		} else {
-			playerData.PrimaryWeapon = e.Weapon
-		}
+	case common.EqClassSMG, common.EqClassRifle, common.EqClassHeavy:
+		playerData.PrimaryWeapon = e.Weapon
+	case common.EqClassPistols:
+		playerData.SecondaryWeapon = e.Weapon
 	case common.EqClassGrenade:
 		if playerData.GrenadeLoadout == nil {
 			playerData.GrenadeLoadout = make([]*common.Equipment, 0)
@@ -782,13 +821,18 @@ func (c *Collector) handleItemPickup(e events.ItemPickup) {
 	// Track buy history if this is a new purchase
 	if currentTick-playerData.LastBuyTick < 10 { // Within buy window
 		playerData.BuyHistory = append(playerData.BuyHistory, e.Weapon.Type)
-		playerData.RoundSpendMoney += e.Weapon.Price()
+
+		playerData.RoundSpendMoney += c.WeaponDetails[e.Weapon.Type].Price
 
 		// Update team economy type
-		if e.Weapon.Class() == common.EqClassRifle || e.Weapon.Class() == common.EqClassSniper {
+		// TODO: I don't know that buying a rifle is necessarily a full buy? We need to be more precise in general here.
+		// TODO: We should probably define a type for these rather than use strings
+		if e.Weapon.Class() == common.EqClassRifle {
 			playerData.TeamEconomyType = "Full Buy"
 		} else if e.Weapon.Class() == common.EqClassSMG {
 			playerData.TeamEconomyType = "Force Buy"
+		} else {
+			playerData.TeamEconomyType = "Save"
 		}
 	}
 
@@ -807,7 +851,7 @@ func (c *Collector) handleItemDrop(e events.ItemDrop) {
 
 	playerData := c.PerTickInfo[currentTick][e.Player.SteamID64]
 	playerData.LastDropTick = currentTick
-	playerData.DroppedValue += e.Weapon.Price()
+	playerData.DroppedValue += c.WeaponDetails[e.Weapon.Type].Price
 
 	// Remove from loadout
 	if e.Weapon == playerData.PrimaryWeapon {
@@ -822,6 +866,26 @@ func (c *Collector) handleItemDrop(e events.ItemDrop) {
 				break
 			}
 		}
+	}
+
+	c.PerTickInfo[currentTick][e.Player.SteamID64] = playerData
+}
+
+func (c *Collector) handleItemRefund(e events.ItemRefund) {
+	if e.Player == nil || e.Weapon == nil {
+		return
+	}
+	currentTick := c.parser.GameState().IngameTick()
+	if _, ok := c.PerTickInfo[currentTick]; !ok {
+		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
+	}
+
+	playerData := c.PerTickInfo[currentTick][e.Player.SteamID64]
+	playerData.RoundSpendMoney -= c.WeaponDetails[e.Weapon.Type].Price
+
+	// Remove from buy history if it was just bought
+	if len(playerData.BuyHistory) > 0 && playerData.BuyHistory[len(playerData.BuyHistory)-1] == e.Weapon.Type {
+		playerData.BuyHistory = playerData.BuyHistory[:len(playerData.BuyHistory)-1]
 	}
 
 	c.PerTickInfo[currentTick][e.Player.SteamID64] = playerData
