@@ -1,0 +1,50 @@
+[
+  {
+    "Epoch": 0,
+    "TrainingLoss": 0.007200356536973574,
+    "ValidationLoss": 0.18154214583246686,
+    "FeedbackAccuracy": 0.8468728044553178,
+    "TacticalPrecision": 0.7998557717707928,
+    "PositionalAccuracy": 0.835995659004616,
+    "EconomicPrecision": 0.8106329995974308,
+    "ComparisonAccuracy": 0.8267812164239275,
+    "TrainingDuration": 2334033400,
+    "TimestampUTC": "2025-02-18T20:50:27.0495452Z"
+  },
+  {
+    "Epoch": 1,
+    "TrainingLoss": 0.007200356536973574,
+    "ValidationLoss": 0.15123857975093663,
+    "FeedbackAccuracy": 0.8683090830716477,
+    "TacticalPrecision": 0.8147897396319712,
+    "PositionalAccuracy": 0.8646927497976972,
+    "EconomicPrecision": 0.830264435983197,
+    "ComparisonAccuracy": 0.8545881603139502,
+    "TrainingDuration": 2295768200,
+    "TimestampUTC": "2025-02-18T20:50:29.3464345Z"
+  },
+  {
+    "Epoch": 2,
+    "TrainingLoss": 0.007200356536973574,
+    "ValidationLoss": 0.18445492499039065,
+    "FeedbackAccuracy": 0.8367213118940867,
+    "TacticalPrecision": 0.7884702759426891,
+    "PositionalAccuracy": 0.836039342061539,
+    "EconomicPrecision": 0.7942360647310396,
+    "ComparisonAccuracy": 0.8273259011358732,
+    "TrainingDuration": 2100092100,
+    "TimestampUTC": "2025-02-18T20:50:31.4465262Z"
+  },
+  {
+    "Epoch": 3,
+    "TrainingLoss": 0.007200356536973574,
+    "ValidationLoss": 0.1957388258578197,
+    "FeedbackAccuracy": 0.8307622096577821,
+    "TacticalPrecision": 0.7775295927840368,
+    "PositionalAccuracy": 0.818340670650206,
+    "EconomicPrecision": 0.7837389896038428,
+    "ComparisonAccuracy": 0.8156245037701501,
+    "TrainingDuration": 2074462800,
+    "TimestampUTC": "2025-02-18T20:50:33.5209886Z"
+  }
+]

@@ -98,11 +98,11 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	los := LineOfSightSystem{
 		logger: slog.Default(),
 	}
-	mapM, err := loadMapModel("")
+	mapM, err := LoadMapModel("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
 	}
-	playerM, err := loadPlayerModel("")
+	playerM, err := LoadPlayerModel("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
 	}
@@ -111,7 +111,7 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	return &los, nil
 }
 
-func loadMapModel(path string) (*Model, error) {
+func LoadMapModel(path string) (*Model, error) {
 	m, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\world_output.obj")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load map model: %w", err)
@@ -119,7 +119,7 @@ func loadMapModel(path string) (*Model, error) {
 	return m, nil
 }
 
-func loadPlayerModel(path string) (*Model, error) {
+func LoadPlayerModel(path string) (*Model, error) {
 	p, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\ctm_sas_output.obj")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load player model: %w", err)
