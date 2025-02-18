@@ -1,0 +1,212 @@
+Pistols,Price,Kill Award,Damage,Bullets,"Armor
+Penetration","Damage
+Falloff @ 500U","Headshot
+Multiplier","Fire Rate
+(RPM)","Penetration
+Power","Magazine
+Size","Ammo in
+Reserve",Mobility,Tagging Power,"Bullet
+Range","Hold to
+Shoot",Tracers,"Accurate
+Range Stand","Accurate
+Range Crouch","Standing
+Inaccuracy","Crouching
+Inaccuracy","Running
+Inaccuracy","Ladder
+Inaccuracy","Inaccuracy at
+Jump Apex","Inaccuracy
+After Landing","Inaccuracy
+From Firing","Recovery
+TimeCrouch","Recovery
+TimeStand","Recoil
+Amount","Recoil Angle
+Variance","Recoil Amount
+Variance","Recoil
+Pattern","Fatal Headshot
+Range","Fatal Headshot
+Range(Helmet)"
+Desert Eagle,$700,$300,53,1,93.20%,15%,3.900x,266.67,200%,7,35,230,60%,"4,096",No,Every Bullet,24.58m,36.46m,6.20,4.18,54.30,306.00,378.30,27.00,72.23,0.449927,0.811200,48.2,60,18,Random,"2,233.89","2,017.23"
+R8 Revolver,$600,$300,86,1,93.20%,6%,4.000x,120.00,200%,8,8,180,60%,"4,096",Yes,Every Bullet,see note,see note,see note,see note,see note,24.52,55.75,#VALUE!,50.00,0.700000,0.900000,20.0,40,0,Set Pattern,"9,983.54","9,414.48"
+Revolver (Rapid Fire),-,-,-,-,-,-,-,150.00,-,-,-,220,-,-,No,Every Bullet,1.91m,2.09m,80.00,73.00,116.00,138.00,133.23,122.03,55.00,-,-,45.0,50,6,Random,-,-
+Dual Berettas,$300,$300,38,1,57.50%,21%,4.000x,500.00,100%,30,120,240,50%,"4,096",No,Every Bullet,16.93m,21.02m,9.00,7.25,26.85,206.00,167.42,63.65,11.16,0.437491,0.524989,27.0,20,4,Random,888.14,N/A
+Five-SeveN,$500,$300,32,1,91.15%,19%,4.000x,400.00,100%,20,100,240,50%,"4,096",No,Every Bullet,13.73m,17.26m,11.10,8.83,51.10,278.00,100.80,14.28,25.00,0.200000,0.200000,25.0,5,4,Random,585.75,365.88
+Glock-18,$200,$300,30,1,47.00%,15%,4.000x,400.00,100%,20,120,240,50%,"4,096",No,Every Bullet,20.05m,24.58m,7.60,6.20,17.60,276.00,95.47,10.71,56.00,0.200000,0.200000,18.0,20,0,Random,560.92,N/A
+Glock-18 (burst),-,-,-,-,-,-,-,"1,200.00",-,-,-,-,-,-,No,Every Bullet,7.40m,8.47m,20.60,18.00,33.55,253.50,108.47,23.71,45.00,-,-,30.0,-,5,-,-,-
+P2000,$200,$300,35,1,50.50%,9%,4.000x,352.94,100%,13,52,240,50%,"4,096",No,Every Bullet,22.09m,26.83m,6.90,5.68,19.90,278.64,101.38,23.87,50.00,0.291277,0.349532,26.0,0,0,Random,"1,783.85",N/A
+USP-S (no silencer),$200,$300,35,1,50.50%,9%,4.000x,352.94,100%,12,24,240,50%,"4,096",No,Every Bullet,20.59m,24.66m,7.40,6.18,21.27,279.14,101.88,24.37,71.00,0.291277,0.349532,29.0,0,0,Random,"1,783.85",N/A
+USP-S (silencer),-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,None,23.81m,29.42m,6.40,5.18,20.27,241.30,100.88,23.60,52.00,-,-,23.0,-,-,-,-,-
+P250,$300,$300,38,1,64.00%,10%,4.000x,400.00,100%,13,26,240,50%,"4,096",No,Every Bullet,13.73m,17.26m,11.10,8.83,31.10,278.00,104.06,27.43,52.45,0.287823,0.345388,26.0,10,3,Random,"1,987.04",N/A
+CZ75 Auto,$500,$300,31,1,77.65%,15%,4.000x,600.00,100%,12,12,240,50%,"4,096",Yes,Every Bullet,11.35m,14.38m,13.43,10.60,26.84,279.00,106.39,19.80,35.00,0.227500,0.242500,31.0,120,6,Set Pattern,661.80,N/A
+Tec-9,$500,$300,33,1,90.60%,21%,4.000x,500.00,100%,18,90,240,50%,"4,096",No,Every Bullet,22.09m,26.83m,6.90,5.68,10.71,243.20,86.68,27.09,45.00,0.315000,0.391000,23.0,60,3,Random,588.90,379.51
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Shotguns,Price,Kill Award,Damage,Bullets,"Armor
+Penetration","Damage
+Falloff @ 500U","Headshot
+Multiplier","Firerate
+(RPM)","Penetration
+Power","Magazine
+Size","Ammo in
+Reserve",Mobility,Tagging Power,"Bullet
+Range","Hold to
+Shoot",Tracers,"Accurate
+Range Stand","Accurate
+Range Crouch","Standing
+Inaccuracy","Crouching
+Inaccuracy","Running
+Inaccuracy","Ladder
+Inaccuracy","Inaccuracy at
+Jump Apex","Inaccuracy
+After Landing","Inaccuracy
+From Firing","Recovery
+TimeCrouch","Recovery
+TimeStand","Recoil
+Amount","Recoil Angle
+Variance","Recoil Amount
+Variance","Recoil
+Pattern","Fatal Headshot
+Range","Fatal Headshot
+Range(Helmet)"
+Mag-7,"$1,300",$900,30,8,75.00%,55%,4.000x,70.59,100%,5,32,225,60%,"1,400",No,Every Bullet,3.24m,3.37m,47.00,45.25,62.99,308.52,97.09,58.93,11.19,0.285521,0.399729,165.0,20,25,Random,114.16,N/A
+Nova,"$1,050",$900,26,9,50.00%,30%,4.000x,68.18,100%,8,32,220,60%,"3,000",No,Every Bullet,3.24m,3.37m,47.00,45.25,83.75,197.50,173.31,84.38,9.72,0.328941,0.460517,143.0,20,22,Random,54.98,N/A
+Sawed-Off,"$1,100",$900,32,8,75.00%,55%,4.000x,70.59,100%,7,32,210,60%,"1,400",No,Every Bullet,2.21m,2.27m,69.00,67.25,85.80,134.00,126.70,86.09,9.72,0.328941,0.460517,143.0,20,22,Random,154.58,N/A
+XM1014,"$2,000",$600,20,6,80.00%,30%,4.000x,171.43,100%,7,32,215,60%,"3,000",Yes,Every Bullet,3.39m,3.52m,45.00,43.25,81.03,192.42,175.83,89.22,8.83,0.361835,0.506569,80.0,20,20,Set Pattern,N/A,N/A
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+SMGs,Price,Kill Award,Damage,Bullets,"Armor
+Penetration","Damage
+Falloff @ 500U","Headshot
+Multiplier","Firerate
+(RPM)","Penetration
+Power","Magazine
+Size","Ammo in
+Reserve",Mobility,Tagging Power,"Bullet
+Range","Hold to
+Shoot",Tracers,"Accurate
+Range Stand","Accurate
+Range Crouch","Standing
+Inaccuracy","Crouching
+Inaccuracy","Running
+Inaccuracy","Ladder
+Inaccuracy","Inaccuracy at
+Jump Apex","Inaccuracy
+After Landing","Inaccuracy
+From Firing","Recovery
+TimeCrouch","Recovery
+TimeStand","Recoil
+Amount","Recoil Angle
+Variance","Recoil Amount
+Variance","Recoil
+Pattern","Fatal Headshot
+Range","Fatal Headshot
+Range(Helmet)"
+PP-Bizon,"$1,400",$600,27,1,63.00%,20%,4.000x,750.00,100%,64,120,240,100%,"3,600",Yes,Every Third,10.16m,13.25m,15.00,11.50,42.57,340.30,48.47,20.71,2.88,0.236837,0.331572,18.0,70,1,Set Pattern,172.45,N/A
+MAC-10,"$1,050",$600,29,1,57.50%,20%,4.000x,800.00,100%,30,100,240,100%,"3,600",Yes,Every Third,10.96m,14.40m,13.90,10.58,27.89,69.12,47.20,21.85,4.76,0.285521,0.399729,18.0,70,1,Set Pattern,332.57,N/A
+MP7,"$1,500",$600,29,1,62.50%,15%,4.000x,750.00,100%,30,120,220,100%,"3,600",Yes,Every Third,14.38m,16.75m,10.60,9.10,30.46,115.72,70.20,26.95,2.18,0.312494,0.437491,16.0,70,1,Set Pattern,456.62,N/A
+MP5-SD,"$1,500",$600,27,1,62.50%,15%,4.000x,750.00,100%,30,120,235,100%,"3,600",Yes,None,14.38m,16.75m,10.60,9.10,40.60,115.72,70.20,26.95,2.18,0.312494,0.437491,16.0,70,1,Set Pattern,236.78,N/A
+MP9,"$1,250",$600,26,1,60.00%,13%,4.000x,857.14,100%,30,120,240,100%,"3,600",Yes,Every Third,15.88m,17.72m,9.60,8.60,38.64,298.43,28.03,11.41,3.70,0.184207,0.257890,19.0,70,1,Set Pattern,140.82,N/A
+P90,"$2,350",$300,26,1,69.00%,14%,4.000x,857.14,100%,50,100,230,100%,"3,700",Yes,Every Third,10.40m,13.56m,14.65,11.24,45.65,265.34,104.73,29.28,2.85,0.265784,0.372098,16.0,70,1,Set Pattern,130.02,N/A
+UMP-45,"$1,200",$600,35,1,65.00%,25%,4.000x,666.67,100%,25,100,230,100%,"3,700",Yes,Every Third,10.56m,13.77m,14.43,11.07,43.19,85.70,51.68,21.47,3.42,0.249995,0.349993,23.0,40,1,Set Pattern,584.80,N/A
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Automatic Rifles,Price,Kill Award,Damage,Bullets,"Armor
+Penetration","Damage
+Falloff @ 500U","Headshot
+Multiplier","Firerate
+(RPM)","Penetration
+Power","Magazine
+Size","Ammo in
+Reserve",Mobility,Tagging Power,"Bullet
+Range","Hold to
+Shoot",Tracers,"Accurate
+Range Stand","Accurate
+Range Crouch","Standing
+Inaccuracy","Crouching
+Inaccuracy","Running
+Inaccuracy","Inaccuracy
+Ladder","Inaccuracy at
+Jump Apex","Inaccuracy
+After Landing","Inaccuracy
+From Firing","Recovery
+TimeCrouch","Recovery
+TimeStand","Recoil
+Amount","Recoil Angle
+Variance","Recoil Amount
+Variance","Recoil
+Pattern","Fatal Headshot
+Range","Fatal Headshot
+Range(Helmet)"
+AK-47,"$2,700",$300,36,1,77.50%,2%,4.000x,600.00,200%,30,90,215,60%,"8,192",Yes,Every Third,21.74m,28.17m,7.01,5.41,182.07,280.60,147.77,33.63,7.80,0.305257,0.368000,30.0,70,0,Set Pattern,"9,024.61","2,716.24"
+AUG,"$3,300",$300,28,1,90.00%,2%,4.000x,600.00,200%,30,90,220,60%,"8,192",Yes,Every Third,28.22m,36.46m,5.40,4.18,140.85,220.58,111.39,33.75,7.29,0.305520,0.429727,24.0,60,0,Set Pattern,"2,804.79",197.21
+AUG (scoped),-,-,-,-,-,-,-,-,-,-,-,150,-,-,-,Every Third,38.29m,44.69m,3.98,3.41,109.43,200.38,109.97,32.33,-,-,-,16.0,-,-,-,-,-
+FAMAS,"$1,950",$300,30,1,70.00%,4%,4.000x,666.67,200%,25,90,220,60%,"8,192",Yes,Every Third,18.61m,24.98m,8.19,6.10,107.53,238.03,118.58,16.21,6.05,0.120000,0.250000,20.0,60,1,Set Pattern,"2,233.13",N/A
+FAMAS (burst),-,-,-,-,-,-,-,800.00,-,-,-,-,-,-,No,Every Third,35.52m,39.58m,4.29,3.85,103.63,238.03,114.68,12.31,3.35,-,-,20.0,50,-,Random,-,-
+Galil AR,"$1,800",$300,30,1,77.50%,2%,4.000x,666.67,200%,35,90,215,60%,"8,192",Yes,Every Third,16.26m,21.23m,9.37,7.18,132.93,227.76,159.15,27.00,7.00,0.150000,0.300000,21.0,70,1,Set Pattern,"4,512.31",N/A
+M4A4,"$2,900",$300,33,1,70.00%,3%,4.000x,666.67,200%,30,90,225,60%,"8,192",Yes,Every Third,27.71m,32.43m,5.50,4.70,143.38,222.59,102.77,21.66,7.00,0.242100,0.338941,23.0,70,0,Set Pattern,"4,557.44",N/A
+M4A1-S (no silencer),"$2,900",$300,38,1,70.00%,6%,3.475x,600.00,200%,20,80,225,60%,"8,192",Yes,Every Third,27.71m,32.43m,5.50,4.70,98.38,222.59,105.20,22.08,12.00,0.242100,0.338941,25.0,65,3,Set Pattern,"2,246.53",N/A
+M4A1-S (silencer),-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,None,28.22m,33.13m,5.40,4.60,127.40,227.84,105.10,21.98,7.00,-,-,21.0,-,0,-,-,-
+SG 553,"$3,000",$300,30,1,100.00%,2%,4.000x,545.45,200%,30,90,210,60%,"8,192",Yes,Every Third,23.78m,34.56m,6.41,4.41,142.42,167.92,115.41,36.91,7.95,0.379204,0.452886,28.0,60,2,Set Pattern,"4,512.31","4,512.31"
+SG 553 (scoped),-,-,-,-,-,-,-,-,-,-,-,150,-,-,-,Every Third,37.08m,45.49m,4.11,3.35,140.12,277.82,113.11,34.61,-,-,-,19.0,-,-,-,-,-
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+LMGs,Price,Kill Award,Damage,Bullets,"Armor
+Penetration","Damage
+Falloff @ 500U","Headshot
+Multiplier","Firerate
+(RPM)","Penetration
+Power","Magazine
+Size","Ammo in
+Reserve",Mobility,Tagging Power,"Bullet
+Range","Hold to
+Shoot",Tracers,"Accurate
+Range Stand","Accurate
+Range Crouch","Standing
+Inaccuracy","Crouching
+Inaccuracy","Running
+Inaccuracy","Ladder
+Inaccuracy","Inaccuracy at
+Jump Apex","Inaccuracy
+After Landing","Inaccuracy
+From Firing","Recovery
+TimeCrouch","Recovery
+TimeStand","Recoil
+Amount","Recoil Angle
+Variance","Recoil Amount
+Variance","Recoil
+Pattern","Fatal Headshot
+Range","Fatal Headshot
+Range(Helmet)"
+M249,"$5,200",$300,32,1,80.00%,3%,4.000x,750.00,200%,100,200,195,60%,"8,192",Yes,Every Bullet,15.71m,20.76m,9.70,7.34,165.95,267.62,289.17,168.18,3.56,0.592093,0.828931,25.0,50,2,Set Pattern,"4,052.31",389.32
+Negev,"$1,700",$300,35,1,71.00%,3%,4.000x,800.00,200%,150,300,150,60%,"8,192",Yes,Every Bullet,12.52m,15.83m,12.17,9.63,171.31,274.86,304.40,44.44,30.00,0.250000,0.300000,20.0,0,2,Set Pattern,"5,523.33",N/A
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sniper Rifles,Price,Kill Award,Damage,Bullets,"Armor
+Penetration","Damage
+Falloff @ 500U","Headshot
+Multiplier","Firerate
+(RPM)","Penetration
+Power","Magazine
+Size","Ammo in
+Reserve",Mobility,Tagging Power,"Bullet
+Range","Hold to
+Shoot",Tracers,"Accurate
+Range Stand","Accurate
+Range Crouch","Standing
+Inaccuracy","Crouching
+Inaccuracy","Running
+Inaccuracy","Ladder
+Inaccuracy","Inaccuracy at
+Jump Apex","Inaccuracy
+After Landing","Inaccuracy
+From Firing","Recovery
+TimeCrouch","Recovery
+TimeStand","Recoil
+Amount","Recoil Angle
+Variance","Recoil Amount
+Variance","Recoil
+Pattern","Fatal Headshot
+Range","Fatal Headshot
+Range(Helmet)"
+AWP,"$4,750",$100,115,1,97.50%,1%,4.000x,41.24,250%,5,30,200,65%,"8,192",No,Every Bullet,1.88m,2.51m,81.00,60.80,257.48,273.20,214.83,105.61,53.85,0.246710,0.345390,78.0,20,15,Random,"75,920.66","74,661.11"
+AWP (scoped),-,-,-,-,-,-,-,-,-,-,-,100,-,-,-,-,69.27m,89.65m,2.20,1.70,178.68,273.20,136.03,20.02,-,-,-,-,-,-,-,-,-
+G3SG1,"$5,000",$300,80,1,82.50%,2%,4.000x,240.00,250%,20,90,215,50%,"8,192",Yes,Every Bullet,5.84m,7.76m,26.10,19.65,176.58,233.08,179.87,83.04,18.61,0.388808,0.544331,30.0,30,4,Set Pattern,"28,787.00","24,025.96"
+G3SG1 (scoped),-,-,-,-,-,-,-,-,-,-,-,120,-,-,-,-,66.26m,84.67m,2.30,1.80,152.78,233.08,156.07,59.24,-,-,-,-,-,-,-,-,-
+SCAR-20,"$5,000",$300,80,1,82.50%,2%,4.000x,240.00,250%,20,90,215,65%,"8,192",Yes,Every Bullet,5.84m,7.76m,26.10,19.65,176.58,233.08,179.87,83.04,18.61,0.388808,0.544331,31.0,30,4,Set Pattern,"28,787.00","24,025.96"
+SCAR-20 (scoped),-,-,-,-,-,-,.,-,-,-,-,120,-,-,-,-,66.26m,84.67m,2.30,1.80,152.78,233.08,156.07,59.24,-,-,-,-,-,-,-,-,-
+SSG 08,"$1,700",$300,88,1,85.00%,2%,4.000x,48.00,250%,10,90,230,65%,"8,192",No,Every Bullet,4.77m,6.33m,31.98,24.06,155.43,191.26,37.70,32.30,22.92,0.055783,0.142096,33.0,20,15,Random,"31,145.85","27,123.64"
+SSG 08 (scoped),-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,47.18m,50.30m,3.23,3.03,126.68,191.21,8.95,3.55,-,-,-,-,-,-,-,-,-
