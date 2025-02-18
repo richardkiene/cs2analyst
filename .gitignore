@@ -29,3 +29,6 @@ debug_visibility/
 
 # txt files
 *.txt
+
+# training output
+training_metrics.json
