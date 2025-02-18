@@ -10,9 +10,33 @@ import (
 )
 
 type DamageDealt struct {
-	ArmorDamage  int
-	HealthDamage int
-	HitGroup     byte
+	ArmorDamage     int
+	HealthDamage    int
+	HitGroup        byte
+	Distance        float32   // Distance between attacker and victim
+	NumPenetrations int       // Number of walls penetrated
+	IsNoScope       bool      // Shot was made without scoping
+	IsAttackerInAir bool      // Attacker was in the air
+	IsThroughSmoke  bool      // Shot went through smoke
+	BulletsFired    int       // Number of bullets fired in this exchange
+	BulletsHit      int       // Number of bullets that hit
+	AimPunchAngle   r3.Vector // Aim punch when damage was dealt
+	DamageDirection r3.Vector // Direction the damage came from
+}
+
+type GrenadeData struct {
+	Type             common.EquipmentType
+	ProjectileID     int
+	ThrownPosition   r3.Vector
+	DetonatePosition r3.Vector
+	Bounces          []r3.Vector // Positions where grenade bounced
+	AffectedPlayers  []uint64    // Players affected by the grenade
+	Damage           int         // Damage dealt by HE/Molotov
+	FlashDuration    float32     // Duration of flash effect
+	ThrownTick       int         // When it was thrown
+	DetonateTick     int         // When it detonated/activated
+	InnerRadius      float32     // Effective inner radius
+	OuterRadius      float32     // Effective outer radius
 }
 
 type PlayerTickData struct {
@@ -58,6 +82,93 @@ type PlayerTickData struct {
 	CurrentMoneySpentTotal int
 	DamageDealtToPlayer    map[uint64]DamageDealt
 	DemoTime               time.Duration
+
+	// Enhanced combat data
+	BulletsFired        int
+	BulletsHit          int
+	HeadshotCount       int
+	WallbangCount       int
+	NoScopeCount        int
+	BlindKills          int
+	ThroughSmokeKills   int
+	LastDamageDealtTick int
+	LastDamageTakenTick int
+	LastDeathTick       int
+	LastKillTick        int
+	KillStreak          int
+	BlindShots          int
+	JumpShots           int
+
+	// Enhanced movement data
+	LastJumpTick      int
+	LastLandedTick    int
+	JumpCount         int
+	StutterStepCount  int
+	CrouchCount       int
+	WalkCount         int
+	RunCount          int
+	StopCount         int
+	DirectionChanges  int
+	LastMoveDirection r3.Vector
+
+	// Enhanced utility data
+	ActiveGrenades     map[int]*GrenadeData // Key is ProjectileID
+	GrenadeHistory     []*GrenadeData
+	FlashDuration      float32
+	LastFlashTick      int
+	IsInSmoke          bool
+	IsInMolotov        bool
+	SmokeBlockedCount  int // Times vision was blocked by smoke
+	UtilityDamageDealt int // Damage dealt with utility
+	UtilityDamageTaken int // Damage taken from utility
+	UnusedUtilityValue int
+
+	// Enhanced equipment data
+	PrimaryWeapon   *common.Equipment
+	SecondaryWeapon *common.Equipment
+	GrenadeLoadout  []*common.Equipment
+	LastBuyTick     int
+	LastDropTick    int
+	DroppedValue    int // Value of dropped equipment
+	BuyHistory      []common.EquipmentType
+
+	// Enhanced tactical data
+	SpottedBy         []uint64  // SteamIDs of players who can see this player
+	CanSee            []uint64  // SteamIDs of players this player can see
+	AreaName          string    // Current map area name
+	ExposedToAreas    []string  // Areas this player is exposed to
+	NearestCover      r3.Vector // Nearest cover position
+	DistanceToBomb    float32   // Distance to bomb/bombsite
+	LastContactTick   int       // Last tick with enemy contact
+	IsHoldingAngle    bool      // Player is holding an angle
+	AngleHeldDuration int       // Ticks spent holding current angle
+
+	// Enhanced sound data
+	SoundEvents   []string // Types of sounds made this tick
+	StepCount     int      // Number of steps taken
+	LastStepTick  int
+	IsMakingNoise bool
+	NoiseRadius   float32
+
+	// Economic data
+	RoundStartMoney int
+	RoundSpendMoney int
+	SavedMoney      int
+	LossBonus       int
+	TeamEconomyType string // e.g., "Full Buy", "Eco", "Force Buy"
+
+	// Round contribution
+	RoundDamageDealt    int
+	RoundUtilityDamage  int
+	RoundEnemiesFlashed int
+	RoundSupportScore   int // Score for supportive actions
+
+	// Map geometry interaction
+	VisibleMapAreas []int   // Areas of map currently visible
+	CoverPercentage float32 // Percentage of body in cover
+	PeekType        string  // Type of peek: "Wide", "Tight", "Shoulder"
+	LastPeekTick    int
+	PeekCount       int
 }
 
 func (p *PlayerTickData) ForwardVector() r3.Vector {

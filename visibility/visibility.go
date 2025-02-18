@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/golang/geo/r3"
+	"github.com/markus-wa/quickhull-go/v2"
 	"github.com/richardkiene/cs2analyst/types"
 )
 
@@ -608,6 +609,33 @@ func (m *Model) GetVisibilityPoints() []r3.Vector {
 
 	m.visibilityPoints = points
 	return points
+}
+
+// PointInConvexHull checks if a point is inside a convex hull
+func PointInConvexHull(hull quickhull.ConvexHull, point r3.Vector) bool {
+	triangles := hull.Triangles()
+
+	for _, tri := range triangles {
+		// Compute the normal of the triangle face
+		normal := r3.Vector.Cross(
+			r3.Vector.Sub(tri[1], tri[0]),
+			r3.Vector.Sub(tri[2], tri[0]),
+		)
+
+		// Ensure the normal points outward (dot product with one of the vertices)
+		if r3.Vector.Dot(normal, tri[0]) < 0 {
+			normal = r3.Vector{X: -normal.X, Y: -normal.Y, Z: -normal.Z}
+		}
+
+		// Compute the signed distance from the point to the plane
+		if r3.Vector.Dot(normal, point)-r3.Vector.Dot(normal, tri[0]) > 0 {
+			// If the point is in front of any face, it's outside the hull
+			return false
+		}
+	}
+
+	// If it's behind all faces, it's inside the convex hull
+	return true
 }
 
 // degToRad converts degrees to radians.
