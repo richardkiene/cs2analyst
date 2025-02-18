@@ -675,34 +675,14 @@ func getCandidateWorldPoint(target types.PlayerTickData, bp r3.Vector) r3.Vector
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye.
 func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) (bool, []r3.Vector) {
 	var hitPoints []r3.Vector
-	// Enable extra debug logging for a specific tick (change as needed).
-	debugEnabled := (tick == 44176)
+	debugEnabled := (tick == 30348)
 
-	// Compute the shooter's eye position.
+	// Compute the shooter's eye position
 	eyePos := GetEyePosition(shooter, playerModel)
-	if debugEnabled {
-		slog.Debug("Raw player data",
-			"tick", tick,
-			"shooter_id", shooter.SteamID,
-			"shooter_yaw", shooter.ViewAngleX,
-			"shooter_pitch", shooter.ViewAngleY,
-			"shooter_pos", fmt.Sprintf("(%.2f, %.2f, %.2f)", shooter.Position.X, shooter.Position.Y, shooter.Position.Z),
-			"target_id", target.SteamID,
-			"target_pos", fmt.Sprintf("(%.2f, %.2f, %.2f)", target.Position.X, target.Position.Y, target.Position.Z))
-		slog.Debug("Eye position",
-			"eye_pos", fmt.Sprintf("(%.2f, %.2f, %.2f)", eyePos.X, eyePos.Y, eyePos.Z),
-			"is_crouched", shooter.IsCrouched)
-	}
 
-	// Get candidate visibility points.
+	// Get candidate visibility points
 	points := playerModel.GetVisibilityPoints()
-	forward := shooter.ForwardVector()
-	if debugEnabled {
-		slog.Debug("Forward vector",
-			"forward", fmt.Sprintf("(%.2f, %.2f, %.2f)", forward.X, forward.Y, forward.Z))
-	}
 
-	// First, check if any candidate point is roughly in the shooter's field of view.
 	anyInFOV := false
 	for _, bp := range points {
 		wp := getCandidateWorldPoint(target, bp)
@@ -711,32 +691,33 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 			break
 		}
 	}
+
 	if !anyInFOV {
-		if debugEnabled {
-			slog.Debug("No candidate points in FOV", "shooter_id", shooter.SteamID, "target_id", target.SteamID)
-		}
 		return false, hitPoints
 	}
 
-	// (Optional) Initialize LOS aggregator if the shooter is the one we want to debug.
+	// Initialize LOS stats if needed
 	var losStats *LosStats
-	shooterOfInterest := uint64(76561197991944713)
+	shooterOfInterest := uint64(76561198237889474)
 	if shooter.SteamID == shooterOfInterest {
 		losStats = NewLosStats()
 	}
 
-	// For each candidate point that passes the FOV test, perform a detailed line-of-sight test.
+	// More generous tolerances for visibility testing
+	const (
+		minMargin     = -2.0 // Reduced from 5.0 > 2.0 > -2.0
+		baseTolerance = 0.02 // 2% base tolerance
+		minTolerance  = 1.0  // Minimum 1 unit tolerance
+	)
+
+	// Check each candidate point
 	for i, bp := range points {
 		wp := getCandidateWorldPoint(target, bp)
-		// Check again using the precise FOV test.
-		if !shooter.IsInFieldOfViewFromEye(wp, eyePos) {
-			continue
-		}
-
 		rayDir := wp.Sub(eyePos).Normalize()
 		distToCandidate := wp.Sub(eyePos).Norm()
-		// Set a tolerance of 5% of the candidate distance.
-		tolerance := distToCandidate * 0.05
+
+		// Adaptive tolerance based on distance
+		tolerance := math.Max(distToCandidate*baseTolerance, minTolerance)
 
 		if debugEnabled {
 			slog.Debug("Testing candidate",
@@ -746,8 +727,9 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 				"tolerance", tolerance)
 		}
 
-		// Perform the ray intersection test using the BVH.
+		// Ray intersection test
 		hitT, hitFound := mapModel.bvh.RayIntersectionDistance(eyePos, rayDir, math.MaxFloat64)
+
 		if debugEnabled {
 			slog.Debug("Ray intersection result",
 				"point_index", i,
@@ -756,62 +738,47 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 				"hitT+tolerance", hitT+tolerance)
 		}
 
-		// If a hit was found, calculate and record the hit point.
+		// Record hit points for visualization
 		if hitFound {
 			hitPoint := eyePos.Add(rayDir.Mul(hitT))
 			hitPoints = append(hitPoints, hitPoint)
 		}
 
-		// Compute a margin: the extra distance allowed (hitT + tolerance minus the candidate distance).
-		var margin float64
+		// Calculate visibility margin
+		margin := math.MaxFloat64
 		if hitFound {
-			margin = (hitT + tolerance) - distToCandidate
-		} else {
-			// If no hit was found, we assume the candidate is visible with a margin equal to the tolerance.
-			margin = tolerance
+			// If hit is behind target (with tolerance), consider it visible
+			margin = distToCandidate - hitT
+			if margin < 0 {
+				// Hit is in front of target, apply tolerance to see if it's close enough
+				margin = (hitT + tolerance) - distToCandidate
+			}
 		}
 
-		const minMargin = 5.0 // adjust this threshold as needed
-		if debugEnabled {
-			slog.Debug("Computed margin",
-				"point_index", i,
-				"margin", margin)
-		}
-
-		// Decision: if a hit was found and the intersection occurs before reaching the candidate, the candidate is occluded.
-		if hitFound && (hitT+tolerance) < distToCandidate {
-			if debugEnabled {
-				slog.Debug("Candidate occluded",
-					"point_index", i,
-					"margin", margin)
-			}
-			continue
-		} else if margin < minMargin {
-			if debugEnabled {
-				slog.Debug("Candidate rejected due to insufficient margin",
-					"point_index", i, "margin", margin, "minMargin", minMargin)
-			}
-			continue
-		} else {
-			// Optionally update LOS aggregator for the shooter of interest.
+		// Visibility check with relaxed constraints
+		if !hitFound || margin > -minMargin { // Allow slightly negative margins
 			if shooter.SteamID == shooterOfInterest {
 				losStats.UpdateLosStats(margin, tolerance)
-				slog.Debug("LOS aggregate stats for shooter", "stats", losStats.Summary())
 			}
+
 			if debugEnabled {
 				slog.Debug("Visibility confirmed",
 					"point_index", i,
 					"shooter_id", shooter.SteamID,
 					"target_id", target.SteamID,
-					"margin", margin)
+					"margin", margin,
+					"hitT", hitT,
+					"distToCandidate", distToCandidate)
 			}
-			// Return immediately on the first candidate that is deemed visible.
+
 			return true, hitPoints
 		}
 	}
 
 	if debugEnabled {
-		slog.Debug("No visibility found", "shooter_id", shooter.SteamID, "target_id", target.SteamID)
+		slog.Debug("No visibility found",
+			"shooter_id", shooter.SteamID,
+			"target_id", target.SteamID)
 	}
 	return false, hitPoints
 }

@@ -193,16 +193,54 @@ func (p *PlayerTickData) ForwardVector() r3.Vector {
 	}.Normalize()
 }
 
-// IsInFieldOfView returns whether 'target' is within ~120° of the forward vector
+// IsInFieldOfViewFromEye returns whether 'target' is within CS2's actual FOV from eye position
 func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {
-	// Define the field-of-view in degrees (half FOV = FOV/2)
-	const FOV_DEGREES = 120.0 // same as before
+	const (
+		HORIZONTAL_FOV = 90.0
+		VERTICAL_FOV   = 74.0
+	)
+
 	toTarget := target.Sub(eyePos).Normalize()
-	forward := p.ForwardVector() // still computed from p.ViewAngleX/Y
-	dotProduct := forward.Dot(toTarget)
-	angleRadians := math.Acos(dotProduct)
-	angleDegrees := angleRadians * (180 / math.Pi)
-	return angleDegrees <= (FOV_DEGREES / 2)
+	forward := p.ForwardVector()
+
+	// Calculate horizontal angle using X-Y plane
+	forwardHorizontal := r3.Vector{
+		X: forward.X,
+		Y: forward.Y,
+		Z: 0,
+	}.Normalize()
+
+	toTargetHorizontal := r3.Vector{
+		X: toTarget.X,
+		Y: toTarget.Y,
+		Z: 0,
+	}.Normalize()
+
+	horizontalDot := forwardHorizontal.Dot(toTargetHorizontal)
+	if horizontalDot > 1.0 {
+		horizontalDot = 1.0
+	} else if horizontalDot < -1.0 {
+		horizontalDot = -1.0
+	}
+	horizontalAngle := math.Acos(horizontalDot) * (180 / math.Pi)
+
+	// Calculate vertical angle
+	// Get the right vector to define the vertical plane
+	right := forward.Cross(r3.Vector{X: 0, Y: 0, Z: 1}).Normalize()
+
+	// Project toTarget onto the plane perpendicular to right
+	// This gives us the vertical component
+	projectedToTarget := toTarget.Sub(right.Mul(toTarget.Dot(right))).Normalize()
+
+	verticalDot := forward.Dot(projectedToTarget)
+	if verticalDot > 1.0 {
+		verticalDot = 1.0
+	} else if verticalDot < -1.0 {
+		verticalDot = -1.0
+	}
+	verticalAngle := math.Acos(verticalDot) * (180 / math.Pi)
+
+	return horizontalAngle <= (HORIZONTAL_FOV/2) && verticalAngle <= (VERTICAL_FOV/2)
 }
 
 func (p *PlayerTickData) IsPartiallyVisible(target, eyePos r3.Vector, slackDegrees float64) bool {

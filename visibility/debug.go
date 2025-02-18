@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -232,6 +233,10 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	}
 
 	// 4) cull map geometry by distance & FOV
+	slog.Debug("Starting map geometry processing",
+		"totalTriangles", len(mapModel.triangles),
+		"maxDistance", maxDistance)
+
 	eyePos := GetEyePosition(shooter, playerModel)
 
 	fmt.Fprintf(writer, "\no partial_map\n")
@@ -257,6 +262,15 @@ func CreateShooterCentricFOVUsingTargetDistance(
 			keep = true
 		}
 
+		slog.Debug("Triangle FOV check",
+			"distA", distA,
+			"distB", distB,
+			"distC", distC,
+			"inFOVA", inFOVA,
+			"inFOVB", inFOVB,
+			"inFOVC", inFOVC,
+			"maxDistance", maxDistance)
+
 		if keep {
 			outA := transformPosition(vA)
 			outB := transformPosition(vB)
@@ -268,6 +282,9 @@ func CreateShooterCentricFOVUsingTargetDistance(
 			vertexIndex += 3
 		}
 	}
+
+	slog.Debug("Finished map geometry processing",
+		"trianglesKept", vertexIndex/3)
 
 	// 5) optional cone from shooter local origin (0,0,0)
 	if includeCone {

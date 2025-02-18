@@ -332,6 +332,12 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 
 	c.PerTickInfo[currentTick][attackerID] = attackerData
 	c.PerTickInfo[currentTick][victimID] = victimData
+
+	/*
+		 * hacky debug code to test a tick
+		if currentTick == 44170 {
+			slog.Debug("Suspect Tick 44170", "attackerID", attackerID, "victimID", victimID, "attackerPos", attackerData.Position, "victimPos", victimData.Position)
+		}*/
 }
 
 func (c *Collector) handleBulletDamage(e events.BulletDamage) {

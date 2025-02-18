@@ -185,7 +185,8 @@ func runAnalyze(cfg *config) error {
 	}
 
 	// Process demo file
-	match, err := c.Collect(cfg.demoPath)
+	// TODO: When match is actually populated, use it.
+	_, err := c.Collect(cfg.demoPath)
 	if err != nil {
 		return fmt.Errorf("failed to process demo: %w", err)
 	}
@@ -208,7 +209,7 @@ func runAnalyze(cfg *config) error {
 	}
 
 	// Analyze collected data
-	results, err := a.Analyze(c.PerTickInfo, float64(match.TickRate), c.TickTime)
+	results, err := a.Analyze(c.PerTickInfo, c.TickRate, c.TickTime)
 	if err != nil {
 		return fmt.Errorf("failed to analyze data: %w", err)
 	}

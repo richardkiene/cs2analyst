@@ -61,6 +61,18 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 	var allPairs []playerPair
 	pairsSeen := make(map[playerPair]bool)
 
+	// Debug counters
+	skippedEngagementWindow := 0
+	skippedNoVisibility := 0
+	skippedLongTTD := 0
+	acceptedTTD := 0
+	totalDamageEvents := 0
+
+	a.logger.Info("Starting analysis",
+		"tickRate", tickRate,
+		"msPerTick", msPerTick,
+		"tickTime", tickTime)
+
 	// Collect damage events
 	for tick, playerMap := range tickData {
 		for steamID, player := range playerMap {
@@ -77,11 +89,15 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 					}
 					stat := stats[steamID]
 					stat.damageEvents++
+					// TODO: This is a debug hack for now
+					totalDamageEvents++
 					stats[steamID] = stat
 				}
 			}
 		}
 	}
+
+	a.logger.Info("Initial damage events collected", "totalDamageEvents", totalDamageEvents)
 
 	// Sort pairs for deterministic processing
 	sort.Slice(allPairs, func(i, j int) bool {
@@ -104,6 +120,13 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 		for _, dmg := range damages {
 			// Skip if this damage is too close to the last engagement
 			if dmg.tick-lastEngagementTick < minNewEngagementTicks {
+				skippedEngagementWindow++
+				a.logger.Debug("Skipped damage event - too close to last engagement",
+					"shooter", pair.shooter,
+					"target", pair.target,
+					"damageTick", dmg.tick,
+					"lastEngagementTick", lastEngagementTick,
+					"delta", dmg.tick-lastEngagementTick)
 				continue
 			}
 
@@ -116,7 +139,26 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 				pair.shooter, pair.target, dmg.tick, tickData); ok && result.IsValid {
 
 				// Calculate TTD
-				timeDelta := float64(dmg.tick-result.StartTick) * msPerTick
+				// Calculate time delta in milliseconds
+				tickDelta := dmg.tick - result.StartTick
+				if tickDelta < 0 {
+					a.logger.Warn("Invalid tick delta - damage before visibility",
+						"shooter", pair.shooter,
+						"target", pair.target,
+						"visibilityStartTick", result.StartTick,
+						"damageTick", dmg.tick,
+						"tickDelta", tickDelta)
+					continue
+				}
+
+				// Verify tickRate is valid
+				if tickRate <= 0 || tickRate > 128 { // CS2 tickrate should be between 16 and 128
+					a.logger.Error("Invalid tickRate",
+						"tickRate", tickRate)
+					continue
+				}
+
+				timeDelta := float64(tickDelta) * msPerTick
 				if timeDelta < 1000.0 { // Filter out unreasonably long TTDs
 					playerTimeToDamage[pair.shooter] = append(
 						playerTimeToDamage[pair.shooter],
@@ -126,36 +168,40 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 					stat.ttdSamples++
 					stats[pair.shooter] = stat
 
+					acceptedTTD++
 					lastEngagementTick = dmg.tick
 
-					// Debug logging
-					// Setting to Warn for now
-					a.logger.Warn("TTD sample recorded",
+					a.logger.Info("TTD sample recorded",
 						"shooter", pair.shooter,
 						"target", pair.target,
 						"visibilityStartTick", result.StartTick,
-						"firstVisibleShooterPos", result.ShooterPos,
-						"firstVisibleTargetPos", result.VictimPos,
 						"damageTick", dmg.tick,
 						"ttd", timeDelta)
-				} else if timeDelta >= 1000.0 && timeDelta < 1500.00 && pair.shooter == 76561198863796909 {
-					a.logger.Warn("TTD sample in suspect zone",
+				} else {
+					skippedLongTTD++
+					a.logger.Debug("Skipped damage event - TTD too long",
 						"shooter", pair.shooter,
 						"target", pair.target,
 						"visibilityStartTick", result.StartTick,
-						"firstVisibleShooterPos", result.ShooterPos,
-						"firstVisibleTargetPos", result.VictimPos,
 						"damageTick", dmg.tick,
 						"ttd", timeDelta)
 				}
 			} else {
-				a.logger.Warn("Damage without visibility",
+				skippedNoVisibility++
+				a.logger.Debug("Skipped damage event - no visibility found",
 					"shooter", pair.shooter,
 					"target", pair.target,
 					"damageTick", dmg.tick)
 			}
 		}
 	}
+
+	a.logger.Info("TTD Analysis Complete",
+		"totalDamageEvents", totalDamageEvents,
+		"skippedEngagementWindow", skippedEngagementWindow,
+		"skippedNoVisibility", skippedNoVisibility,
+		"skippedLongTTD", skippedLongTTD,
+		"acceptedTTD", acceptedTTD)
 
 	// Calculate medians
 	for steamID, timings := range playerTimeToDamage {
