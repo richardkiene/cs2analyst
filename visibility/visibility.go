@@ -74,6 +74,27 @@ type Hitbox struct {
 	Type      string // "Box", "Sphere", "Capsule"
 }
 
+type VisibilityDebugInfo struct {
+	RayIntersections []r3.Vector
+	FOVCheckResults  []FOVCheckResult
+	MarginResults    []MarginResult
+}
+
+type FOVCheckResult struct {
+	CandidatePoint  r3.Vector
+	InFOV           bool
+	HorizontalAngle float64
+	VerticalAngle   float64
+}
+
+type MarginResult struct {
+	Point       r3.Vector
+	Margin      float64
+	Tolerance   float64
+	HitFound    bool
+	HitDistance float64
+}
+
 func NewModel() *Model {
 	return &Model{
 		sectors:  make(map[gridKey][]types.Triangle),
@@ -442,7 +463,7 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	var candidateShooterPos, candidateVictimPos r3.Vector
 
 	// Only log debug messages if the shooter matches the specified SteamID.
-	debugEnabled := (playerID == 76561197991944713)
+	debugEnabled := (playerID == 76561199139199601)
 
 	if debugEnabled {
 		slog.Debug("FindLastContinuousVisibilityStart called",
@@ -454,10 +475,17 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	}
 
 	gapCount := 0
+	lastVisibleTick := -1
+	continuousVisibilityStart := -1
+
 	// Iterate backwards from currentTick, but only up to maxWindowTicks
 	for tick := currentTick; tick >= 0 && (currentTick-tick) <= maxWindowTicks; tick-- {
 		if debugEnabled {
-			slog.Debug("Processing tick", "tick", tick, "currentTick", currentTick)
+			slog.Info("Processing tick",
+				"tick", tick,
+				"gapCount", gapCount,
+				"lastVisibleTick", lastVisibleTick,
+				"continuousVisibilityStart", continuousVisibilityStart)
 		}
 
 		playerData, ok := perTickInfo[tick]
@@ -481,21 +509,28 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		// If the shooter is blind, don't count it as a gap in visibility
 		if shooterTick.IsBlinded {
 			//reset gapCount since the player was flashed
-			gapCount = 0
 			if debugEnabled {
-				slog.Debug("Reset and skip gapCount because shooter was blind.", "gapCount", gapCount)
+				slog.Info("Shooter is blinded",
+					"tick", tick,
+					"flashDuration", shooterTick.FlashDuration)
 			}
+			gapCount = 0
 			continue
 		}
 
 		if !ok || !shooterTick.IsAlive {
 			gapCount++
 			if debugEnabled {
-				slog.Debug("Shooter data missing or invalid", "tick", tick, "shooterTick", shooterTick, "gapCount", gapCount)
+				slog.Info("Shooter data invalid",
+					"tick", tick,
+					"shooterAlive", shooterTick.IsAlive,
+					"gapCount", gapCount)
 			}
 			if gapCount > allowedGap {
 				if debugEnabled {
-					slog.Debug("Allowed gap exceeded (shooter data), breaking", "tick", tick, "gapCount", gapCount)
+					slog.Info("Allowed gap exceeded (shooter data), breaking",
+						"tick", tick,
+						"gapCount", gapCount)
 				}
 				break
 			}
@@ -506,11 +541,16 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		if !ok || !targetTick.IsAlive {
 			gapCount++
 			if debugEnabled {
-				slog.Debug("Target data missing or target not alive", "tick", tick, "targetTick", targetTick, "gapCount", gapCount)
+				slog.Info("Target data invalid",
+					"tick", tick,
+					"targetAlive", targetTick.IsAlive,
+					"gapCount", gapCount)
 			}
 			if gapCount > allowedGap {
 				if debugEnabled {
-					slog.Debug("Allowed gap exceeded (target data), breaking", "tick", tick, "gapCount", gapCount)
+					slog.Info("Allowed gap exceeded (target data), breaking",
+						"tick", tick,
+						"gapCount", gapCount)
 				}
 				break
 			}
@@ -518,30 +558,48 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		// Use the loop variable tick when checking LOS so that the positions from that tick are used.
-		canSeeTarget, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, tick)
+		canSeeTarget, hitPoints, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, tick)
 		if debugEnabled {
-			slog.Debug("Tick visibility check", "tick", tick, "canSeeTarget", canSeeTarget, "gapCount", gapCount)
+			eyePos := GetEyePosition(shooterTick, v.LosSystem.PlayerModel)
+			slog.Info("Visibility check",
+				"tick", tick,
+				"canSeeTarget", canSeeTarget,
+				"shooterPos", shooterTick.Position,
+				"eyePos", eyePos,
+				"targetPos", targetTick.Position,
+				"numHitPoints", len(hitPoints))
 		}
 
 		if canSeeTarget {
-			// Found a visible tick—update candidate and reset gap counter.
-			candidateTick = tick
+			if lastVisibleTick == -1 || (lastVisibleTick-tick) > allowedGap {
+				// Start of a new visibility window
+				if debugEnabled {
+					slog.Info("Starting new visibility window",
+						"tick", tick,
+						"lastVisibleTick", lastVisibleTick)
+				}
+				continuousVisibilityStart = tick
+			}
+			lastVisibleTick = tick
+			candidateTick = continuousVisibilityStart
 			candidateTime = shooterTick.DemoTime
 			candidateShooterPos = shooterTick.Position
 			candidateVictimPos = targetTick.Position
-			if debugEnabled {
-				slog.Debug("Visibility found", "tick", tick, "candidateTick", candidateTick,
-					"shooterPos", candidateShooterPos, "targetPos", candidateVictimPos)
-			}
 			gapCount = 0
 		} else {
 			gapCount++
 			if debugEnabled {
-				slog.Debug("No visibility at tick", "tick", tick, "gapCount", gapCount)
+				slog.Info("No visibility at tick",
+					"tick", tick,
+					"gapCount", gapCount)
 			}
 			if gapCount > allowedGap {
 				if debugEnabled {
-					slog.Debug("Allowed gap exceeded after non-visible tick, breaking", "tick", tick, "gapCount", gapCount)
+					slog.Info("Allowed gap exceeded, breaking",
+						"tick", tick,
+						"gapCount", gapCount,
+						"lastVisibleTick", lastVisibleTick,
+						"continuousVisibilityStart", continuousVisibilityStart)
 				}
 				break
 			}
@@ -550,7 +608,11 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 
 	if candidateTick != -1 {
 		if debugEnabled {
-			slog.Debug("Returning visibility result", "StartTick", candidateTick, "StartTime", candidateTime)
+			slog.Info("Found visibility result",
+				"candidateTick", candidateTick,
+				"startTime", candidateTime,
+				"shooterPos", candidateShooterPos,
+				"victimPos", candidateVictimPos)
 		}
 		return VisibilityResult{
 			StartTick:  candidateTick,
@@ -572,38 +634,65 @@ func (m *Model) GetVisibilityPoints() []r3.Vector {
 	}
 
 	var points []r3.Vector
+
 	for _, hitbox := range m.hitboxes {
+		// Compute a center for the current hitbox
 		center := r3.Vector{
 			X: (hitbox.MinBounds.X + hitbox.MaxBounds.X) / 2,
 			Y: (hitbox.MinBounds.Y + hitbox.MaxBounds.Y) / 2,
 			Z: (hitbox.MinBounds.Z + hitbox.MaxBounds.Z) / 2,
 		}
-
+		// Always include the center
 		points = append(points, center)
 
 		switch hitbox.Type {
 		case "Box":
-			points = append(points,
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MaxBounds.Z},
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MaxBounds.Z},
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MinBounds.Z},
-				r3.Vector{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MinBounds.Z},
-			)
+			// Return all 8 corners
+			corners := []r3.Vector{
+				{X: hitbox.MinBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MinBounds.Z},
+				{X: hitbox.MinBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MaxBounds.Z},
+				{X: hitbox.MinBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MinBounds.Z},
+				{X: hitbox.MinBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MaxBounds.Z},
+				{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MinBounds.Z},
+				{X: hitbox.MaxBounds.X, Y: hitbox.MinBounds.Y, Z: hitbox.MaxBounds.Z},
+				{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MinBounds.Z},
+				{X: hitbox.MaxBounds.X, Y: hitbox.MaxBounds.Y, Z: hitbox.MaxBounds.Z},
+			}
+			points = append(points, corners...)
+
 		case "Sphere":
+			// We'll pick multiple directions around the center
 			radius := (hitbox.MaxBounds.Sub(hitbox.MinBounds)).Norm() / 2
-			points = append(points,
-				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
-				r3.Vector{X: center.X, Y: center.Y + radius, Z: center.Z},
-				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + radius},
-			)
+			offsets := []r3.Vector{
+				{X: radius, Y: 0, Z: 0},
+				{X: -radius, Y: 0, Z: 0},
+				{X: 0, Y: radius, Z: 0},
+				{X: 0, Y: -radius, Z: 0},
+				{X: 0, Y: 0, Z: radius},
+				{X: 0, Y: 0, Z: -radius},
+			}
+			for _, off := range offsets {
+				points = append(points, center.Add(off))
+			}
+
 		case "Capsule":
+			// For a capsule, sample the top, bottom, and a “ring” around the middle
 			height := hitbox.MaxBounds.Z - hitbox.MinBounds.Z
 			radius := (hitbox.MaxBounds.X - hitbox.MinBounds.X) / 2
-			points = append(points,
-				r3.Vector{X: center.X + radius, Y: center.Y, Z: center.Z},
-				r3.Vector{X: center.X, Y: center.Y, Z: center.Z + height/4},
-				r3.Vector{X: center.X, Y: center.Y, Z: center.Z - height/4},
-			)
+			top := center.Add(r3.Vector{X: 0, Y: 0, Z: height/2 - radius})
+			bottom := center.Sub(r3.Vector{X: 0, Y: 0, Z: height/2 - radius})
+			points = append(points, top, bottom)
+
+			// Add a few points around the “waist” of the capsule
+			ringOffsets := []r3.Vector{
+				{X: radius, Y: 0, Z: 0},
+				{X: -radius, Y: 0, Z: 0},
+				{X: 0, Y: radius, Z: 0},
+				{X: 0, Y: -radius, Z: 0},
+			}
+			for _, off := range ringOffsets {
+				points = append(points, center.Add(off))
+			}
 		}
 	}
 
@@ -673,27 +762,65 @@ func getCandidateWorldPoint(target types.PlayerTickData, bp r3.Vector) r3.Vector
 }
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye.
-func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) (bool, []r3.Vector) {
+func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) (bool, []r3.Vector, *VisibilityDebugInfo) {
 	var hitPoints []r3.Vector
-	debugEnabled := (tick == 30348)
+	debugEnabled := (shooter.SteamID == 76561199139199601)
+	debugInfo := &VisibilityDebugInfo{
+		RayIntersections: make([]r3.Vector, 0),
+		FOVCheckResults:  make([]FOVCheckResult, 0),
+		MarginResults:    make([]MarginResult, 0),
+	}
 
 	// Compute the shooter's eye position
 	eyePos := GetEyePosition(shooter, playerModel)
+
+	if debugEnabled {
+		slog.Info("CanSeeTarget check",
+			"tick", tick,
+			"shooterSteamID", shooter.SteamID,
+			"targetSteamID", target.SteamID,
+			"eyePos", eyePos,
+			"targetPos", target.Position)
+	}
 
 	// Get candidate visibility points
 	points := playerModel.GetVisibilityPoints()
 
 	anyInFOV := false
-	for _, bp := range points {
+	for i, bp := range points {
 		wp := getCandidateWorldPoint(target, bp)
-		if shooter.IsInFieldOfViewFromEye(wp, eyePos) {
+		inFOV := shooter.IsInFieldOfViewFromEye(wp, eyePos)
+		if debugEnabled {
+			slog.Info("FOV check for point",
+				"pointIndex", i,
+				"worldPoint", wp,
+				"inFOV", inFOV)
+			// Calculate angles for debugging
+			toTarget := wp.Sub(eyePos).Normalize()
+			forward := shooter.ForwardVector()
+
+			horizontalAngle := calculateHorizontalAngle(forward, toTarget)
+			verticalAngle := calculateVerticalAngle(forward, toTarget)
+
+			debugInfo.FOVCheckResults = append(debugInfo.FOVCheckResults, FOVCheckResult{
+				CandidatePoint:  wp,
+				InFOV:           inFOV,
+				HorizontalAngle: horizontalAngle,
+				VerticalAngle:   verticalAngle,
+			})
+		}
+		if inFOV {
 			anyInFOV = true
 			break
 		}
 	}
 
 	if !anyInFOV {
-		return false, hitPoints
+		if debugEnabled {
+			slog.Info("No points in FOV, failing visibility check")
+		}
+
+		return false, hitPoints, debugInfo
 	}
 
 	// Initialize LOS stats if needed
@@ -711,7 +838,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 	)
 
 	// Check each candidate point
-	for i, bp := range points {
+	for _, bp := range points {
 		wp := getCandidateWorldPoint(target, bp)
 		rayDir := wp.Sub(eyePos).Normalize()
 		distToCandidate := wp.Sub(eyePos).Norm()
@@ -719,29 +846,26 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 		// Adaptive tolerance based on distance
 		tolerance := math.Max(distToCandidate*baseTolerance, minTolerance)
 
-		if debugEnabled {
-			slog.Debug("Testing candidate",
-				"point_index", i,
-				"wp", fmt.Sprintf("(%.2f, %.2f, %.2f)", wp.X, wp.Y, wp.Z),
-				"distToCandidate", distToCandidate,
-				"tolerance", tolerance)
-		}
+		// NEW: Use partial geometry approach
+		geometry := mapModel.GetRelevantMapGeometry(eyePos, wp)
+		var hitFound bool
+		var hitT float64
 
-		// Ray intersection test
-		hitT, hitFound := mapModel.bvh.RayIntersectionDistance(eyePos, rayDir, math.MaxFloat64)
-
-		if debugEnabled {
-			slog.Debug("Ray intersection result",
-				"point_index", i,
-				"hitFound", hitFound,
-				"hitT", hitT,
-				"hitT+tolerance", hitT+tolerance)
+		// We’ll keep track of the closest intersection, if any
+		closest := math.MaxFloat64
+		for _, tri := range geometry {
+			// Intersect the ray with 'tri'
+			if t, ok := RayIntersectsTriangle(eyePos, rayDir, tri); ok && t < closest {
+				closest = t
+				hitFound = true
+			}
 		}
 
 		// Record hit points for visualization
 		if hitFound {
 			hitPoint := eyePos.Add(rayDir.Mul(hitT))
 			hitPoints = append(hitPoints, hitPoint)
+			debugInfo.RayIntersections = append(debugInfo.RayIntersections, hitPoint)
 		}
 
 		// Calculate visibility margin
@@ -755,32 +879,94 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 			}
 		}
 
+		if debugEnabled {
+			debugInfo.MarginResults = append(debugInfo.MarginResults, MarginResult{
+				Point:       wp,
+				Margin:      margin,
+				Tolerance:   tolerance,
+				HitFound:    hitFound,
+				HitDistance: hitT,
+			})
+		}
+
 		// Visibility check with relaxed constraints
 		if !hitFound || margin > -minMargin { // Allow slightly negative margins
 			if shooter.SteamID == shooterOfInterest {
 				losStats.UpdateLosStats(margin, tolerance)
 			}
 
-			if debugEnabled {
-				slog.Debug("Visibility confirmed",
-					"point_index", i,
-					"shooter_id", shooter.SteamID,
-					"target_id", target.SteamID,
-					"margin", margin,
-					"hitT", hitT,
-					"distToCandidate", distToCandidate)
-			}
-
-			return true, hitPoints
+			return true, hitPoints, debugInfo
 		}
 	}
 
-	if debugEnabled {
-		slog.Debug("No visibility found",
-			"shooter_id", shooter.SteamID,
-			"target_id", target.SteamID)
+	return false, hitPoints, debugInfo
+}
+
+// RayIntersectsTriangle returns (t, true) if the ray from rayStart in the direction rayDir
+// intersects the triangle tri at distance t along the ray. Returns (0, false) if no intersection.
+func RayIntersectsTriangle(rayStart, rayDir r3.Vector, tri types.Triangle) (float64, bool) {
+	// Möller–Trumbore or some similar method:
+	eps := 1e-6
+	v0, v1, v2 := tri.V1, tri.V2, tri.V3
+	edge1 := v1.Sub(v0)
+	edge2 := v2.Sub(v0)
+	h := rayDir.Cross(edge2)
+	a := edge1.Dot(h)
+	if a > -eps && a < eps {
+		return 0, false // parallel
 	}
-	return false, hitPoints
+	f := 1.0 / a
+	s := rayStart.Sub(v0)
+	u := f * s.Dot(h)
+	if u < 0.0 || u > 1.0 {
+		return 0, false
+	}
+	q := s.Cross(edge1)
+	v := f * rayDir.Dot(q)
+	if v < 0.0 || u+v > 1.0 {
+		return 0, false
+	}
+	t := f * edge2.Dot(q)
+	// intersection must be forward along the ray (t >= 0)
+	if t > eps {
+		return t, true
+	}
+	return 0, false
+}
+
+func calculateHorizontalAngle(forward, toTarget r3.Vector) float64 {
+	forwardHorizontal := r3.Vector{
+		X: forward.X,
+		Y: forward.Y,
+		Z: 0,
+	}.Normalize()
+
+	toTargetHorizontal := r3.Vector{
+		X: toTarget.X,
+		Y: toTarget.Y,
+		Z: 0,
+	}.Normalize()
+
+	dot := forwardHorizontal.Dot(toTargetHorizontal)
+	if dot > 1.0 {
+		dot = 1.0
+	} else if dot < -1.0 {
+		dot = -1.0
+	}
+	return math.Acos(dot) * (180 / math.Pi)
+}
+
+func calculateVerticalAngle(forward, toTarget r3.Vector) float64 {
+	right := forward.Cross(r3.Vector{X: 0, Y: 0, Z: 1}).Normalize()
+	projectedToTarget := toTarget.Sub(right.Mul(toTarget.Dot(right))).Normalize()
+
+	dot := forward.Dot(projectedToTarget)
+	if dot > 1.0 {
+		dot = 1.0
+	} else if dot < -1.0 {
+		dot = -1.0
+	}
+	return math.Acos(dot) * (180 / math.Pi)
 }
 
 // NewAABBFromTriangle computes an AABB for a triangle.

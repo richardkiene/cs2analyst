@@ -3,6 +3,7 @@ package analyzer
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"time"
 
@@ -73,11 +74,20 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 		"msPerTick", msPerTick,
 		"tickTime", tickTime)
 
+	suspectPlayerID := 76561199139199601
 	// Collect damage events
 	for tick, playerMap := range tickData {
 		for steamID, player := range playerMap {
 			for targetID, damage := range player.DamageDealtToPlayer {
 				if damage.HealthDamage > 0 {
+					// TODO: Remove this horrible hack to isolate this player
+					if steamID == uint64(suspectPlayerID) {
+						if tick != 84144 {
+							continue
+						}
+
+						a.logger.Debug("Recorded damage event at tick 84144", "suspectPlayerID", suspectPlayerID)
+					}
 					pair := playerPair{shooter: steamID, target: targetID}
 					damagesByPair[pair] = append(damagesByPair[pair], damageEvent{
 						tick:   tick,
@@ -262,29 +272,96 @@ func (a *Analyzer) GenerateDebugVisualization(
 		return fmt.Errorf("either shooter or target is not alive at tick %d", tick)
 	}
 
-	// Get hit points by calling CanSeeTarget
-	_, hitPoints := visibility.CanSeeTarget(shooter, target, a.visibility.LosSystem.PlayerModel, a.visibility.LosSystem.MapModel, tick)
+	// Get hit points and debug info by calling CanSeeTarget
+	_, hitPoints, debugInfo := visibility.CanSeeTarget(
+		shooter,
+		target,
+		a.visibility.LosSystem.PlayerModel,
+		a.visibility.LosSystem.MapModel,
+		tick,
+	)
 
+	// Log detailed debug information
+	a.logger.Info("Generating debug visualization",
+		"tick", tick,
+		"shooter", shooterSteamID,
+		"target", targetSteamID,
+		"numFOVChecks", len(debugInfo.FOVCheckResults),
+		"numRayIntersections", len(debugInfo.RayIntersections),
+		"numMarginResults", len(debugInfo.MarginResults))
+
+	// Log FOV check results
+	for i, fovResult := range debugInfo.FOVCheckResults {
+		a.logger.Info("FOV Check Result",
+			"index", i,
+			"inFOV", fovResult.InFOV,
+			"horizontalAngle", fovResult.HorizontalAngle,
+			"verticalAngle", fovResult.VerticalAngle,
+			"candidatePoint", fovResult.CandidatePoint)
+	}
+
+	// Log margin results
+	for i, marginResult := range debugInfo.MarginResults {
+		a.logger.Info("Margin Result",
+			"index", i,
+			"margin", marginResult.Margin,
+			"tolerance", marginResult.Tolerance,
+			"hitFound", marginResult.HitFound,
+			"hitDistance", marginResult.HitDistance,
+			"point", marginResult.Point)
+	}
+
+	// Create the debug visualization with all debug information
 	err := visibility.CreateShooterCentricFOVUsingTargetDistance(
 		tick,
 		a.visibility.LosSystem.MapModel,
 		a.visibility.LosSystem.PlayerModel,
 		shooter,
 		target,
-		200.0,
-		0.0,
-		true,
+		0.0,  // no extra padding needed for debug
+		true, // include FOV cone
 		hitPoints,
+		debugInfo.RayIntersections, // Add ray intersections for visualization
 	)
 
 	if err != nil {
 		return fmt.Errorf("failed to create debug visualization: %w", err)
 	}
 
-	a.logger.Info("Debug visualization created",
-		"tick", tick,
-		"shooter", shooterSteamID,
-		"target", targetSteamID)
+	// Create a debug file with specific FOV check results
+	fileName := fmt.Sprintf("debug_visibility/fov_results_tick_%d.txt", tick)
+	f, err := os.Create(fileName)
+	if err != nil {
+		return fmt.Errorf("failed to create FOV results file: %w", err)
+	}
+	defer f.Close()
+
+	// Write detailed FOV and visibility information
+	fmt.Fprintf(f, "Debug Visibility Information for Tick %d\n", tick)
+	fmt.Fprintf(f, "Shooter: %d, Target: %d\n\n", shooterSteamID, targetSteamID)
+	fmt.Fprintf(f, "Shooter Position: %v\n", shooter.Position)
+	fmt.Fprintf(f, "Shooter Eye Position: %v\n", visibility.GetEyePosition(shooter, a.visibility.LosSystem.PlayerModel))
+	fmt.Fprintf(f, "Target Position: %v\n", target.Position)
+	fmt.Fprintf(f, "Shooter View Angles: (%.2f, %.2f)\n\n", shooter.ViewAngleX, shooter.ViewAngleY)
+
+	fmt.Fprintf(f, "FOV Check Results:\n")
+	for i, result := range debugInfo.FOVCheckResults {
+		fmt.Fprintf(f, "Point %d:\n", i)
+		fmt.Fprintf(f, "  Candidate Point: %v\n", result.CandidatePoint)
+		fmt.Fprintf(f, "  In FOV: %v\n", result.InFOV)
+		fmt.Fprintf(f, "  Horizontal Angle: %.2f\n", result.HorizontalAngle)
+		fmt.Fprintf(f, "  Vertical Angle: %.2f\n\n", result.VerticalAngle)
+	}
+
+	fmt.Fprintf(f, "Margin Results:\n")
+	for i, result := range debugInfo.MarginResults {
+		fmt.Fprintf(f, "Point %d:\n", i)
+		fmt.Fprintf(f, "  Point: %v\n", result.Point)
+		fmt.Fprintf(f, "  Margin: %.2f\n", result.Margin)
+		fmt.Fprintf(f, "  Tolerance: %.2f\n", result.Tolerance)
+		fmt.Fprintf(f, "  Hit Found: %v\n", result.HitFound)
+		fmt.Fprintf(f, "  Hit Distance: %.2f\n\n", result.HitDistance)
+	}
 
 	return nil
 }

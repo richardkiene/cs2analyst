@@ -50,6 +50,79 @@ d 1.0
 	return os.WriteFile(filepath.Join(outputDir, "debug_materials.mtl"), []byte(mtlContent), 0644)
 }
 
+// Draws a ray from start to end, with optional hit point visualization
+func WriteRay(w io.Writer, start, end r3.Vector, hasHit bool, material string, vertexIndex *int) {
+	fmt.Fprintf(w, "\no debug_ray\n")
+	fmt.Fprintf(w, "usemtl %s\n", material)
+
+	// Write ray vertices
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", start.X, start.Y, start.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", end.X, end.Y, end.Z)
+
+	// Create ray line
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+1)
+	*vertexIndex += 2
+
+	// If there's a hit, draw a small sphere at the intersection point
+	if hasHit {
+		WriteSphere(w, end, 2.0, 8, "hit_material", vertexIndex)
+	}
+}
+
+// Creates an FOV visualization cone based on actual CS2 FOV values
+func WriteFOVCone(w io.Writer, eyePos r3.Vector, forward r3.Vector, material string, vertexIndex *int) {
+	const (
+		HORIZONTAL_FOV = 90.0  // CS2's actual horizontal FOV
+		VERTICAL_FOV   = 74.0  // CS2's actual vertical FOV
+		CONE_LENGTH    = 200.0 // Length of visualization cone
+	)
+
+	fmt.Fprintf(w, "\no fov_cone\n")
+	fmt.Fprintf(w, "usemtl %s\n", material)
+
+	// Convert FOV angles to radians
+	hFovRad := (HORIZONTAL_FOV / 2.0) * (math.Pi / 180.0)
+	vFovRad := (VERTICAL_FOV / 2.0) * (math.Pi / 180.0)
+
+	// Calculate right vector for horizontal plane
+	up := r3.Vector{X: 0, Y: 0, Z: 1}
+	right := forward.Cross(up).Normalize()
+
+	// Calculate base dimensions
+	baseWidth := CONE_LENGTH * math.Tan(hFovRad)
+	baseHeight := CONE_LENGTH * math.Tan(vFovRad)
+
+	// Calculate cone end points
+	endPoint := eyePos.Add(forward.Mul(CONE_LENGTH))
+
+	// Calculate corner points of FOV frustum
+	topRight := endPoint.Add(right.Mul(baseWidth)).Add(up.Mul(baseHeight))
+	topLeft := endPoint.Sub(right.Mul(baseWidth)).Add(up.Mul(baseHeight))
+	bottomRight := endPoint.Add(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
+	bottomLeft := endPoint.Sub(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
+
+	// Write vertices
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", eyePos.X, eyePos.Y, eyePos.Z) // Apex
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", topRight.X, topRight.Y, topRight.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", topLeft.X, topLeft.Y, topLeft.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", bottomRight.X, bottomRight.Y, bottomRight.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", bottomLeft.X, bottomLeft.Y, bottomLeft.Z)
+
+	// Create lines for FOV visualization
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+1) // Top right edge
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+2) // Top left edge
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+3) // Bottom right edge
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+4) // Bottom left edge
+
+	// Create lines connecting the corners
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+1, *vertexIndex+2) // Top edge
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+3, *vertexIndex+4) // Bottom edge
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+1, *vertexIndex+3) // Right edge
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+2, *vertexIndex+4) // Left edge
+
+	*vertexIndex += 5
+}
+
 // WriteSphere writes a simple sphere to the OBJ file at the given center point
 func WriteSphere(w io.Writer, center r3.Vector, radius float64, segments int, material string, vertexIndex *int) {
 	fmt.Fprintf(w, "\no hit_point\n")
@@ -120,9 +193,9 @@ func WriteCone(
 
 	dir := base.Sub(apex).Normalize()
 	var u r3.Vector
-	up := r3.Vector{0, 0, 1}
+	up := r3.Vector{X: 0, Y: 0, Z: 1}
 	if math.Abs(dir.Z) > 0.99 {
-		u = r3.Vector{1, 0, 0}
+		u = r3.Vector{X: 1, Y: 0, Z: 0}
 	} else {
 		u = dir.Cross(up).Normalize()
 	}
@@ -162,10 +235,10 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	playerModel *Model,
 	shooter types.PlayerTickData,
 	target types.PlayerTickData,
-	fovDegrees float64,
 	extraPadding float64,
 	includeCone bool,
 	hitPoints []r3.Vector,
+	rayIntersections []r3.Vector, // New parameter for ray intersection points
 ) error {
 	// 1) compute distance to target, define maxDistance
 	distToTarget := distanceToShooter(shooter, target.Position)
@@ -288,26 +361,27 @@ func CreateShooterCentricFOVUsingTargetDistance(
 
 	// 5) optional cone from shooter local origin (0,0,0)
 	if includeCone {
-		fmt.Fprintf(writer, "\no debug_cone\n")
-		fmt.Fprintf(writer, "usemtl cone_material\n")
+		eyePos := transformPosition(GetEyePosition(shooter, playerModel))
+		forward := shooter.ForwardVector()
+		WriteFOVCone(writer, eyePos, forward, "cone_material", &vertexIndex)
+	}
 
-		// Here, instead of using a hacky constant for eye height, you might want to use the computed eyePos.
-		// In shooter-centric space, the shooter's eye becomes:
-		localEyePos := transformPosition(eyePos)
+	// Visualize rays and their intersections
+	points := playerModel.GetVisibilityPoints()
 
-		// Compute the cone length (distance from shooter to target plus padding).
-		coneLength := distToTarget + extraPadding
+	for _, bp := range points {
+		endPos := getCandidateWorldPoint(target, bp)
+		start := transformPosition(GetEyePosition(shooter, playerModel))
+		end := transformPosition(endPos)
 
-		// Convert the passed-in fovDegrees to a half-angle in radians.
-		halfAngleRadians := (fovDegrees / 2.0) * (math.Pi / 180.0)
-		baseRadius := coneLength * math.Tan(halfAngleRadians)
+		// Draw ray from eye to candidate point
+		WriteRay(writer, start, end, false, "ray_material", &vertexIndex)
+	}
 
-		// Cone apex will be at the shooter’s eye position (localEyePos).
-		// For the cone direction, we use the shooter’s forward vector.
-		forwardDir := shooter.ForwardVector()
-		base := localEyePos.Add(forwardDir.Mul(coneLength))
-
-		WriteCone(writer, localEyePos, base, baseRadius, "cone_material", &vertexIndex)
+	// Visualize ray intersections
+	for _, intersectionPoint := range rayIntersections {
+		localPoint := transformPosition(intersectionPoint)
+		WriteSphere(writer, localPoint, 3.0, 8, "intersection_material", &vertexIndex)
 	}
 
 	// 6) Add hit points visualization
