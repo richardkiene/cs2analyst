@@ -182,14 +182,25 @@ func (p *PlayerTickData) ForwardVector() r3.Vector {
 	}
 	pitch = pitch * (math.Pi / 180)
 
-	// Source coordinate system:
-	// X is forward/East
-	// Y is left/North
-	// Z is up
+	// In Source2:
+	// ViewAngleX (yaw) 0 = North (+Y)
+	// ViewAngleX (yaw) 90 = East (+X)
+	// ViewAngleX (yaw) 180/-180 = South (-Y)
+	// ViewAngleX (yaw) -90 = West (-X)
+	// ViewAngleY (pitch) -90 = Up (+Z)
+	// ViewAngleY (pitch) 90 = Down (-Z)
+
+	// When looking up or down, the X and Y components should be scaled by cos(pitch)
 	return r3.Vector{
-		X: math.Cos(pitch) * math.Cos(yaw), // Forward/East
-		Y: math.Cos(pitch) * math.Sin(yaw), // Left/North
-		Z: -math.Sin(pitch),                // Up
+		// Scale X component by cos(pitch) to reduce horizontal component when looking up/down
+		X: math.Cos(pitch) * math.Sin(yaw),
+
+		// Scale Y component by cos(pitch) to reduce horizontal component when looking up/down
+		Y: math.Cos(pitch) * math.Cos(yaw),
+
+		// Pitch affects vertical component
+		// Negative pitch looks up (+Z)
+		Z: -math.Sin(pitch),
 	}.Normalize()
 }
 
@@ -203,6 +214,26 @@ func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {
 	toTarget := target.Sub(eyePos).Normalize()
 	forward := p.ForwardVector()
 
+	// For nearly vertical views (looking straight up/down), we primarily care about the vertical angle
+	pitch := float64(p.ViewAngleY)
+	if pitch > 180 {
+		pitch -= 360
+	}
+
+	// If we're looking nearly straight up/down (within 5 degrees of vertical)
+	if math.Abs(pitch) > 85 {
+		// Calculate angle between forward vector and target vector
+		dot := forward.Dot(toTarget)
+		if dot > 1.0 {
+			dot = 1.0
+		} else if dot < -1.0 {
+			dot = -1.0
+		}
+		angle := math.Acos(dot) * (180 / math.Pi)
+		return angle <= (VERTICAL_FOV / 2)
+	}
+
+	// For non-vertical views, continue with normal horizontal and vertical FOV checks
 	// Calculate horizontal angle using X-Y plane
 	forwardHorizontal := r3.Vector{
 		X: forward.X,
@@ -225,11 +256,7 @@ func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {
 	horizontalAngle := math.Acos(horizontalDot) * (180 / math.Pi)
 
 	// Calculate vertical angle
-	// Get the right vector to define the vertical plane
 	right := forward.Cross(r3.Vector{X: 0, Y: 0, Z: 1}).Normalize()
-
-	// Project toTarget onto the plane perpendicular to right
-	// This gives us the vertical component
 	projectedToTarget := toTarget.Sub(right.Mul(toTarget.Dot(right))).Normalize()
 
 	verticalDot := forward.Dot(projectedToTarget)

@@ -69,8 +69,12 @@ func WriteRay(w io.Writer, start, end r3.Vector, hasHit bool, material string, v
 	}
 }
 
-// Creates an FOV visualization cone based on actual CS2 FOV values
 func WriteFOVCone(w io.Writer, eyePos r3.Vector, forward r3.Vector, material string, vertexIndex *int) {
+	slog.Info("WriteFOVCone inputs",
+		"eyePos", eyePos,
+		"forward", forward,
+		"forward length", forward.Norm())
+
 	const (
 		HORIZONTAL_FOV = 90.0  // CS2's actual horizontal FOV
 		VERTICAL_FOV   = 74.0  // CS2's actual vertical FOV
@@ -84,13 +88,26 @@ func WriteFOVCone(w io.Writer, eyePos r3.Vector, forward r3.Vector, material str
 	hFovRad := (HORIZONTAL_FOV / 2.0) * (math.Pi / 180.0)
 	vFovRad := (VERTICAL_FOV / 2.0) * (math.Pi / 180.0)
 
-	// Calculate right vector for horizontal plane
-	up := r3.Vector{X: 0, Y: 0, Z: 1}
-	right := forward.Cross(up).Normalize()
-
 	// Calculate base dimensions
 	baseWidth := CONE_LENGTH * math.Tan(hFovRad)
 	baseHeight := CONE_LENGTH * math.Tan(vFovRad)
+
+	// In Blender space, Z is up
+	var up r3.Vector
+	if math.Abs(forward.Z) > 0.99 {
+		// If looking straight up/down, use forward-perpendicular up
+		if forward.Z > 0 {
+			up = r3.Vector{X: 0, Y: 1, Z: 0}
+		} else {
+			up = r3.Vector{X: 0, Y: -1, Z: 0}
+		}
+	} else {
+		up = r3.Vector{X: 0, Y: 0, Z: 1}
+	}
+
+	// Calculate right and true up vectors
+	right := forward.Cross(up).Normalize()
+	up = right.Cross(forward).Normalize()
 
 	// Calculate cone end points
 	endPoint := eyePos.Add(forward.Mul(CONE_LENGTH))
@@ -101,6 +118,13 @@ func WriteFOVCone(w io.Writer, eyePos r3.Vector, forward r3.Vector, material str
 	bottomRight := endPoint.Add(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
 	bottomLeft := endPoint.Sub(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
 
+	slog.Info("FOV Cone points",
+		"apex", eyePos,
+		"topRight", topRight,
+		"topLeft", topLeft,
+		"bottomRight", bottomRight,
+		"bottomLeft", bottomLeft)
+
 	// Write vertices
 	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", eyePos.X, eyePos.Y, eyePos.Z) // Apex
 	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", topRight.X, topRight.Y, topRight.Z)
@@ -108,17 +132,15 @@ func WriteFOVCone(w io.Writer, eyePos r3.Vector, forward r3.Vector, material str
 	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", bottomRight.X, bottomRight.Y, bottomRight.Z)
 	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", bottomLeft.X, bottomLeft.Y, bottomLeft.Z)
 
-	// Create lines for FOV visualization
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+1) // Top right edge
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+2) // Top left edge
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+3) // Bottom right edge
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+4) // Bottom left edge
-
-	// Create lines connecting the corners
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+1, *vertexIndex+2) // Top edge
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+3, *vertexIndex+4) // Bottom edge
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+1, *vertexIndex+3) // Right edge
-	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+2, *vertexIndex+4) // Left edge
+	// Create lines for FOV visualization (unchanged)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+1)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+2)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+3)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+4)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+1, *vertexIndex+2)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+3, *vertexIndex+4)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+1, *vertexIndex+3)
+	fmt.Fprintf(w, "l %d %d\n", *vertexIndex+2, *vertexIndex+4)
 
 	*vertexIndex += 5
 }
@@ -270,9 +292,13 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	vertexIndex := 1
 	shooterPos := shooter.Position
 
-	// transformPosition subtracts the shooterPos (so he's at origin)
+	// transformPosition converts from Source2 to Blender coordinate system
 	transformPosition := func(v r3.Vector) r3.Vector {
-		return v.Sub(shooterPos) // local space
+		return r3.Vector{
+			X: v.Y,  // Source2 Y (north) becomes Blender X (forward)
+			Y: -v.X, // Source2 X (east) becomes Blender -Y (left)
+			Z: v.Z,  // Z stays the same
+		}.Sub(shooterPos) // translate to shooter-centric space
 	}
 
 	// 2) Write shooter at origin
@@ -315,6 +341,11 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	fmt.Fprintf(writer, "\no partial_map\n")
 	fmt.Fprintf(writer, "usemtl map_material\n")
 
+	// Create a temporary PlayerTickData with rotated view angles for FOV checks
+	fovChecker := shooter
+	// Add 90 degrees to rotate the view direction from Source2 to Blender space
+	fovChecker.ViewAngleX = shooter.ViewAngleX + 90
+
 	for _, tri := range mapModel.triangles {
 		vA := tri.V1
 		vB := tri.V2
@@ -324,9 +355,10 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		distB := distanceToShooter(shooter, vB)
 		distC := distanceToShooter(shooter, vC)
 
-		inFOVA := shooter.IsInFieldOfViewFromEye(vA, eyePos)
-		inFOVB := shooter.IsInFieldOfViewFromEye(vB, eyePos)
-		inFOVC := shooter.IsInFieldOfViewFromEye(vC, eyePos)
+		// Use the rotated view angles for FOV checks
+		inFOVA := fovChecker.IsInFieldOfViewFromEye(vA, eyePos)
+		inFOVB := fovChecker.IsInFieldOfViewFromEye(vB, eyePos)
+		inFOVC := fovChecker.IsInFieldOfViewFromEye(vC, eyePos)
 
 		keep := false
 		if (distA <= maxDistance && inFOVA) ||
@@ -335,14 +367,14 @@ func CreateShooterCentricFOVUsingTargetDistance(
 			keep = true
 		}
 
-		slog.Debug("Triangle FOV check",
-			"distA", distA,
-			"distB", distB,
-			"distC", distC,
-			"inFOVA", inFOVA,
-			"inFOVB", inFOVB,
-			"inFOVC", inFOVC,
-			"maxDistance", maxDistance)
+		/*slog.Debug("Triangle FOV check",
+		"distA", distA,
+		"distB", distB,
+		"distC", distC,
+		"inFOVA", inFOVA,
+		"inFOVB", inFOVB,
+		"inFOVC", inFOVC,
+		"maxDistance", maxDistance)*/
 
 		if keep {
 			outA := transformPosition(vA)
@@ -360,10 +392,34 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		"trianglesKept", vertexIndex/3)
 
 	// 5) optional cone from shooter local origin (0,0,0)
+	// Before writing the cone, we need to transform the forward vector just like we
+	// transformed the coordinates
 	if includeCone {
 		eyePos := transformPosition(GetEyePosition(shooter, playerModel))
-		forward := shooter.ForwardVector()
-		WriteFOVCone(writer, eyePos, forward, "cone_material", &vertexIndex)
+		// Get a point 100 units in front of player in Source2 space
+		sourceForward := shooter.ForwardVector()
+		//sourceForwardPoint := GetEyePosition(shooter, playerModel).Add(sourceForward.Mul(100))
+
+		// Transform both points and calculate new forward direction
+		//transformedForwardPoint := transformPosition(sourceForwardPoint)
+
+		// Debug prints
+		slog.Info("FOV Cone vectors",
+			"sourceEyePos", GetEyePosition(shooter, playerModel),
+			"transformedEyePos", eyePos,
+			"sourceForward", sourceForward)
+		//"sourceForwardPoint", sourceForwardPoint,
+		//"transformedForwardPoint", transformedForwardPoint)
+
+		//blenderForward := transformedForwardPoint.Sub(eyePos).Normalize()
+		blenderForward := r3.Vector{
+			X: -sourceForward.Y, // Source2 Y (north) becomes Blender -X to match transformPosition's convention
+			Y: sourceForward.X,  // Source2 X (east) becomes Blender Y
+			Z: sourceForward.Z,  // Z stays the same
+		}.Normalize()
+		slog.Info("Calculated blender forward", "blenderForward", blenderForward)
+
+		WriteFOVCone(writer, eyePos, blenderForward, "cone_material", &vertexIndex)
 	}
 
 	// Visualize rays and their intersections

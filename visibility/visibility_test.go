@@ -254,6 +254,18 @@ func createTestPlayerModel() *Model {
 	// Set reasonable bounds for a player model
 	model.min = r3.Vector{X: -16, Y: -16, Z: 0}
 	model.max = r3.Vector{X: 16, Y: 16, Z: 72}
+
+	// Add required visibility points
+	model.visibilityPoints = []r3.Vector{
+		{X: 0, Y: 0, Z: 64},   // Head height
+		{X: 0, Y: 0, Z: 48},   // Chest height
+		{X: 0, Y: 0, Z: 32},   // Waist height
+		{X: -16, Y: 0, Z: 36}, // Left side
+		{X: 16, Y: 0, Z: 36},  // Right side
+		{X: 0, Y: -16, Z: 36}, // Front
+		{X: 0, Y: 16, Z: 36},  // Back
+	}
+
 	return model
 }
 
@@ -276,12 +288,17 @@ func validateForwardVector(t *testing.T, yaw, pitch float64, got r3.Vector) {
 	yawRad := degToRad(yaw)
 	pitchRad := degToRad(pitch)
 
-	// Calculate expected forward vector based on Source2 conventions
+	// Calculate expected forward vector based on Source2 conventions:
+	// Yaw 0° points north (+Y), 90° points east (+X)
+	// Pitch -90° points up (+Z), 90° points down (-Z)
 	want := r3.Vector{
-		X: math.Cos(yawRad) * math.Cos(pitchRad),
-		Y: math.Sin(yawRad) * math.Cos(pitchRad),
+		// When looking east (90°), X should be 1
+		X: math.Sin(yawRad) * math.Cos(pitchRad),
+		// When looking north (0°), Y should be 1
+		Y: math.Cos(yawRad) * math.Cos(pitchRad),
+		// When looking up (-90°), Z should be 1
 		Z: -math.Sin(pitchRad),
-	}
+	}.Normalize()
 
 	assertVectorsEqual(t, want.Normalize(), got.Normalize(), 0.001)
 }

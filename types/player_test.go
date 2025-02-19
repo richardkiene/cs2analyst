@@ -145,6 +145,113 @@ func TestFieldOfViewCoordinateSystem(t *testing.T) {
 	}
 }
 
+func TestIsInFieldOfViewFromEye(t *testing.T) {
+	tests := []struct {
+		name        string
+		player      PlayerTickData
+		target      r3.Vector
+		eyePos      r3.Vector
+		wantInFOV   bool
+		description string
+	}{
+		{
+			name: "Target directly east",
+			player: PlayerTickData{
+				ViewAngleX: 90, // Looking east
+				ViewAngleY: 0,  // Level
+			},
+			target:      r3.Vector{X: 100, Y: 0, Z: 64},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   true,
+			description: "When looking east, target to the east should be in FOV",
+		},
+		{
+			name: "Target directly north",
+			player: PlayerTickData{
+				ViewAngleX: 0, // Looking north
+				ViewAngleY: 0, // Level
+			},
+			target:      r3.Vector{X: 0, Y: 100, Z: 64},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   true,
+			description: "When looking north, target to the north should be in FOV",
+		},
+		{
+			name: "Target directly up",
+			player: PlayerTickData{
+				ViewAngleX: 0,   // Looking north
+				ViewAngleY: -90, // Looking up
+			},
+			target:      r3.Vector{X: 0, Y: 0, Z: 164},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   true,
+			description: "When looking up, target above should be in FOV",
+		},
+		{
+			name: "Target behind player",
+			player: PlayerTickData{
+				ViewAngleX: 0, // Looking north
+				ViewAngleY: 0, // Level
+			},
+			target:      r3.Vector{X: 0, Y: -100, Z: 64},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   false,
+			description: "Target behind player should not be in FOV",
+		},
+		{
+			name: "Target at 45 degrees horizontal",
+			player: PlayerTickData{
+				ViewAngleX: 0, // Looking north
+				ViewAngleY: 0, // Level
+			},
+			target:      r3.Vector{X: 100, Y: 100, Z: 64},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   true,
+			description: "Target at 45 degrees should be in FOV (within 90 degree horizontal FOV)",
+		},
+		{
+			name: "Target at 45 degrees vertical",
+			player: PlayerTickData{
+				ViewAngleX: 0,   // Looking north
+				ViewAngleY: -45, // Looking up at 45 degrees
+			},
+			target:      r3.Vector{X: 0, Y: 100, Z: 164},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   true,
+			description: "Target at 45 degrees up should be in FOV (within 74 degree vertical FOV)",
+		},
+		{
+			name: "Target just outside horizontal FOV",
+			player: PlayerTickData{
+				ViewAngleX: 0, // Looking north
+				ViewAngleY: 0, // Level
+			},
+			target:      r3.Vector{X: 100, Y: -10, Z: 64},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   false,
+			description: "Target just outside 90 degree horizontal FOV should not be visible",
+		},
+		{
+			name: "Target just outside vertical FOV",
+			player: PlayerTickData{
+				ViewAngleX: 0, // Looking north
+				ViewAngleY: 0, // Level
+			},
+			target:      r3.Vector{X: 0, Y: 100, Z: 264},
+			eyePos:      r3.Vector{X: 0, Y: 0, Z: 64},
+			wantInFOV:   false,
+			description: "Target just outside 74 degree vertical FOV should not be visible",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.player.IsInFieldOfViewFromEye(tt.target, tt.eyePos)
+			assert.Equal(t, tt.wantInFOV, got, tt.description)
+		})
+	}
+}
+
 // Helper functions
 
 func assertVectorsEqual(t *testing.T, want, got r3.Vector, tolerance float64, msg string) {

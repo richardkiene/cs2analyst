@@ -301,9 +301,10 @@ func (m *Model) addTriangleToSectors(t types.Triangle) {
 // shooter.Position represents the feet.
 func GetEyePosition(shooter types.PlayerTickData, playerModel *Model) r3.Vector {
 	height := playerModel.max.Z - playerModel.min.Z
-	eyeHeight := height * 0.85
+	// Standard CS2 eye height is 64 units when standing
+	eyeHeight := height * 0.889 // Adjusted multiplier to get closer to 64 units
 	if shooter.IsCrouched {
-		eyeHeight *= 0.75
+		eyeHeight *= 0.719 // Adjusted to get closer to 46 units when crouching (64 * 0.719 ≈ 46)
 	}
 	return r3.Vector{
 		X: shooter.Position.X,
@@ -789,7 +790,8 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 	anyInFOV := false
 	for i, bp := range points {
 		wp := getCandidateWorldPoint(target, bp)
-		inFOV := shooter.IsInFieldOfViewFromEye(wp, eyePos)
+		// Use a more generous FOV check for visibility
+		inFOV := shooter.IsPartiallyVisible(wp, eyePos, 5.0) // Add 5 degrees of slack
 		if debugEnabled {
 			slog.Info("FOV check for point",
 				"pointIndex", i,
