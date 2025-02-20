@@ -114,6 +114,7 @@ func TestObjFileDirectionConsistency(t *testing.T) {
 		true,
 		nil,
 		nil,
+		false,
 	)
 	assert.NoError(t, err)
 
@@ -150,7 +151,7 @@ func TestFOVDirectionConsistency(t *testing.T) {
 		// This helps catch cases where we accidentally use the wrong one
 		wantForward  r3.Vector // What direction the player is facing
 		wantToTarget r3.Vector // Direction from shooter to target
-		shouldMatch  string    // "forward" or "toTarget" - which direction should the FOV match
+		useForward   bool      // Changed from shouldMatch string to bool for clarity
 	}{
 		{
 			name: "Real gameplay scenario - FOV should match target direction",
@@ -166,7 +167,7 @@ func TestFOVDirectionConsistency(t *testing.T) {
 			},
 			wantForward:  r3.Vector{X: 0.002967, Y: 0.999988, Z: -0.003840}, // Nearly pure Y (north)
 			wantToTarget: r3.Vector{X: 0.999827, Y: 0.018589, Z: -0.000635}, // Nearly pure X (east)
-			shouldMatch:  "toTarget",
+			useForward:   false,
 		},
 		{
 			name: "Simple east-facing scenario - FOV should match forward",
@@ -182,7 +183,7 @@ func TestFOVDirectionConsistency(t *testing.T) {
 			},
 			wantForward:  r3.Vector{X: 1, Y: 0, Z: 0}, // East
 			wantToTarget: r3.Vector{X: 0, Y: 1, Z: 0}, // North
-			shouldMatch:  "forward",
+			useForward:   true,
 		},
 	}
 
@@ -202,6 +203,7 @@ func TestFOVDirectionConsistency(t *testing.T) {
 				true,
 				nil,
 				nil,
+				tt.useForward,
 			)
 			assert.NoError(t, err)
 
@@ -230,19 +232,18 @@ func TestFOVDirectionConsistency(t *testing.T) {
 			rayDir := computeDirectionForRay(rayVerts)
 
 			// Check that cone and ray match the expected direction
-			expected := tt.wantForward
-			if tt.shouldMatch == "toTarget" {
-				expected = tt.wantToTarget
+			expected := tt.wantToTarget
+			if tt.useForward {
+				expected = tt.wantForward
 			}
-
 			// Verify both cone and ray match the expected direction
 			assertVectorsEqual(t, expected, coneDir, 0.05, "FOV cone direction mismatch")
 			assertVectorsEqual(t, expected, rayDir, 0.05, "Debug ray direction mismatch")
 
 			// Explicitly verify they do NOT match the wrong direction
-			wrongExpected := tt.wantToTarget
-			if tt.shouldMatch == "toTarget" {
-				wrongExpected = tt.wantForward
+			wrongExpected := tt.wantForward
+			if tt.useForward {
+				wrongExpected = tt.wantToTarget
 			}
 
 			// These should fail if cone matches wrong direction

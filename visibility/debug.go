@@ -65,7 +65,7 @@ func WriteRay(w io.Writer, start, end r3.Vector, hasHit bool, material string, v
 
 func WriteFOVCone(
 	w io.Writer,
-	eyePos, forward r3.Vector,
+	eyePos, direction r3.Vector, // direction should be either forward or toTarget
 	material string,
 	vertexIndex *int,
 ) {
@@ -79,18 +79,11 @@ func WriteFOVCone(
 	baseWidth := CONE_LENGTH * math.Tan(hFovRad)
 	baseHeight := CONE_LENGTH * math.Tan(vFovRad)
 
-	// In Source2/CS2:
-	// Forward is the view direction
-	// Up is world up (0,0,1) unless nearly vertical
-	// Right is perpendicular to both
+	// Use the passed direction as forward
+	forward := direction.Normalize()
 	globalUp := r3.Vector{X: 0, Y: 0, Z: 1}
 
-	// Handle near-vertical views specially
-	if math.Abs(forward.Z) > 0.99 {
-		// Looking nearly straight up/down - use a fixed right vector
-		globalUp = r3.Vector{X: 0, Y: 1, Z: 0}
-	}
-
+	// Get right and up vectors consistent with the passed direction
 	right := forward.Cross(globalUp).Normalize()
 	up := right.Cross(forward).Normalize()
 
@@ -201,17 +194,6 @@ func WriteCone(
 	fmt.Fprintf(w, "\n")
 }
 
-// Forward vec is the shooter's view direction
-// Right vec is perpendicular to up and forward
-// Up vec is world up (0,0,1) in Source2
-func getViewBasis(shooter types.PlayerTickData) (forward, right, up r3.Vector) {
-	forward = shooter.ForwardVector()
-	up = r3.Vector{X: 0, Y: 0, Z: 1} // World up in Source2
-	right = forward.Cross(up).Normalize()
-	up = right.Cross(forward).Normalize() // Recompute up to ensure orthogonality
-	return forward, right, up
-}
-
 func CreateShooterCentricFOVUsingTargetDistance(
 	tick int,
 	mapModel *Model,
@@ -222,6 +204,7 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	includeCone bool,
 	hitPoints []r3.Vector,
 	rayIntersections []r3.Vector,
+	shouldMatchForward bool,
 ) error {
 	distToTarget := distanceToShooter(shooter, target.Position)
 	maxDistance := distToTarget + extraPadding
@@ -251,12 +234,20 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	vertexIndex := 1
 	eyePos := GetEyePosition(shooter, playerModel)
 
-	// Use vector to target as our forward direction instead of ViewAngle calculation
+	// Choose direction based on shouldMatchForward parameter
 	toTarget := target.Position.Sub(shooter.Position).Normalize()
-	worldEye := eyePos
-	rayEnd := worldEye.Add(toTarget.Mul(200.0))
+	forward := shooter.ForwardVector()
 
-	fmt.Printf("Writing ray: worldEye=%+v rayEnd=%+v toTarget=%+v\n", worldEye, rayEnd, toTarget)
+	direction := toTarget
+	if shouldMatchForward {
+		direction = forward
+	}
+
+	// Use chosen direction for ray and cone
+	worldEye := eyePos
+	rayEnd := worldEye.Add(direction.Mul(200.0))
+
+	fmt.Printf("Writing ray: worldEye=%+v rayEnd=%+v direction=%+v\n", worldEye, rayEnd, direction)
 	WriteRay(writer, worldEye, rayEnd, false, "ray_material", &vertexIndex)
 
 	// Write shooter geometry

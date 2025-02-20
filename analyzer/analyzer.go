@@ -322,6 +322,7 @@ func (a *Analyzer) GenerateDebugVisualization(
 		true, // include FOV cone
 		hitPoints,
 		debugInfo.RayIntersections, // Add ray intersections for visualization
+		false,
 	)
 
 	if err != nil {
