@@ -171,62 +171,32 @@ type PlayerTickData struct {
 	PeekCount       int
 }
 
-func (p *PlayerTickData) ForwardVector() r3.Vector {
-	// Convert angles to radians
-	yaw := float64(p.ViewAngleX) * (math.Pi / 180)
-	pitch := float64(p.ViewAngleY) * (math.Pi / 180)
-
-	// If pitch > 180°, wrap it:
-	if pitch > math.Pi {
-		pitch -= 2 * math.Pi
-	}
-
-	// Now define forward so that yaw=0 => +X (east),
-	// yaw=90 => +Y (north), pitch < 0 => look up, etc.
-	return r3.Vector{
-		// cos(pitch)*cos(yaw) => X component
-		X: math.Cos(pitch) * math.Cos(yaw),
-
-		// cos(pitch)*sin(yaw) => Y component
-		Y: math.Cos(pitch) * math.Sin(yaw),
-
-		// negative sin(pitch) => Z component (so pitch -90 => up)
-		Z: -math.Sin(pitch),
-	}.Normalize()
+// degToRad converts degrees to radians.
+func degToRad(deg float64) float64 {
+	return deg * math.Pi / 180.0
 }
 
-/*func (p *PlayerTickData) ForwardVector() r3.Vector {
-	// Convert angles to radians
-	yaw := float64(p.ViewAngleX) * (math.Pi / 180)
-	pitch := float64(p.ViewAngleY)
-
-	// Correct pitch range: 270..360 => -90..0
-	if pitch > 180 {
-		pitch -= 360
-	}
-	pitch = pitch * (math.Pi / 180)
-
-	// In Source2:
-	// ViewAngleX (yaw) 0 = North (+Y)
-	// ViewAngleX (yaw) 90 = East (+X)
-	// ViewAngleX (yaw) 180/-180 = South (-Y)
-	// ViewAngleX (yaw) -90 = West (-X)
-	// ViewAngleY (pitch) -90 = Up (+Z)
-	// ViewAngleY (pitch) 90 = Down (-Z)
-
-	// When looking up or down, the X and Y components should be scaled by cos(pitch)
+// ForwardVector returns the forward direction in Source2 space.
+// In Source2:
+//   - X is forward (east)
+//   - Y is left (north)
+//   - Z is up
+//
+// And view angles are defined so that:
+//   - ViewAngleX = 0° means facing north (+Y)
+//   - ViewAngleX = 90° means facing east (+X)
+//   - ViewAngleY = -90° means looking straight up (+Z)
+//   - ViewAngleY = 90° means looking straight down (-Z)
+func (p *PlayerTickData) ForwardVector() r3.Vector {
+	yawRad := degToRad(float64(p.ViewAngleX))
+	pitchRad := degToRad(float64(p.ViewAngleY))
 	return r3.Vector{
-		// Scale X component by cos(pitch) to reduce horizontal component when looking up/down
-		X: math.Cos(pitch) * math.Sin(yaw),
-
-		// Scale Y component by cos(pitch) to reduce horizontal component when looking up/down
-		Y: math.Cos(pitch) * math.Cos(yaw),
-
-		// Pitch affects vertical component
-		// Negative pitch looks up (+Z)
-		Z: -math.Sin(pitch),
+		// When yaw = 0, sin(0)=0 so X = 0; cos(0)=1 so Y = 1.
+		X: math.Sin(yawRad) * math.Cos(pitchRad), // East component
+		Y: math.Cos(yawRad) * math.Cos(pitchRad), // North component
+		Z: -math.Sin(pitchRad),                   // Up/Down component
 	}.Normalize()
-}*/
+}
 
 // IsInFieldOfViewFromEye returns whether 'target' is within CS2's actual FOV from eye position
 func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {

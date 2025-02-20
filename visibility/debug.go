@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,7 +12,7 @@ import (
 	"github.com/richardkiene/cs2analyst/types"
 )
 
-// writeMTLFile writes a basic material file for OBJ output.
+// We do no coordinate transform. We just add the shooter’s position for local geometry.
 func writeMTLFile(outputDir string) error {
 	mtlContent := `# Basic materials for debug OBJ
 
@@ -51,79 +50,61 @@ d 1.0
 	return os.WriteFile(filepath.Join(outputDir, "debug_materials.mtl"), []byte(mtlContent), 0644)
 }
 
-// WriteRay draws a ray from start to end, optionally drawing a sphere at the hit point.
 func WriteRay(w io.Writer, start, end r3.Vector, hasHit bool, material string, vertexIndex *int) {
 	fmt.Fprintf(w, "\no debug_ray\n")
 	fmt.Fprintf(w, "usemtl %s\n", material)
-	// Write ray vertices (already in Blender space)
-	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", start.X, start.Y, start.Z)
-	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", end.X, end.Y, end.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f # ray start\n", start.X, start.Y, start.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f # ray end\n", end.X, end.Y, end.Z)
 	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+1)
+	fmt.Printf("Wrote ray: start=%+v end=%+v indices=%d,%d\n", start, end, *vertexIndex, *vertexIndex+1)
 	*vertexIndex += 2
 	if hasHit {
 		WriteSphere(w, end, 2.0, 8, "hit_material", vertexIndex)
 	}
 }
 
-// WriteFOVCone computes the FOV cone entirely in Source2 space and converts
-// each vertex to Blender coordinates right before writing it out.
-// shooterPos is used for shooter-centric conversion.
-func WriteFOVCone(w io.Writer, eyePos, forward r3.Vector, material string, vertexIndex *int, shooterPos r3.Vector) {
+func WriteFOVCone(
+	w io.Writer,
+	eyePos, forward r3.Vector,
+	material string,
+	vertexIndex *int,
+) {
 	const (
-		HORIZONTAL_FOV = 90.0  // Source2 horizontal FOV
-		VERTICAL_FOV   = 74.0  // Source2 vertical FOV
-		CONE_LENGTH    = 200.0 // Cone length in Source2 units
+		HORIZONTAL_FOV = 90.0
+		VERTICAL_FOV   = 74.0
+		CONE_LENGTH    = 200.0
 	)
 	hFovRad := (HORIZONTAL_FOV / 2.0) * (math.Pi / 180.0)
 	vFovRad := (VERTICAL_FOV / 2.0) * (math.Pi / 180.0)
 	baseWidth := CONE_LENGTH * math.Tan(hFovRad)
 	baseHeight := CONE_LENGTH * math.Tan(vFovRad)
 
-	// Compute up and right vectors in Source2 space.
-	var up r3.Vector
-	if math.Abs(forward.Z) > 0.99 {
-		if forward.Z > 0 {
-			up = r3.Vector{X: 0, Y: 1, Z: 0}
-		} else {
-			up = r3.Vector{X: 0, Y: -1, Z: 0}
-		}
-	} else {
-		up = r3.Vector{X: 0, Y: 0, Z: 1}
-	}
-	right := forward.Cross(up).Normalize()
-	up = right.Cross(forward).Normalize()
+	// When looking east (+X):
+	// right should point north (+Y)
+	// up should point up (+Z)
+	globalUp := r3.Vector{X: 0, Y: 0, Z: 1}      // Points up (+Z)
+	right := globalUp.Cross(forward).Normalize() // Use globalUp × forward instead
+	up := globalUp                               // Keep global up
 
-	// Compute the end point and base corners in Source2 space.
+	fmt.Printf("FOV Cone basis - forward=%+v right=%+v up=%+v\n", forward, right, up)
+
 	endPoint := eyePos.Add(forward.Mul(CONE_LENGTH))
 	topRight := endPoint.Add(right.Mul(baseWidth)).Add(up.Mul(baseHeight))
 	topLeft := endPoint.Sub(right.Mul(baseWidth)).Add(up.Mul(baseHeight))
 	bottomRight := endPoint.Add(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
 	bottomLeft := endPoint.Sub(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
 
-	// Conversion helper: convert from Source2 world space to shooter-centric Blender space.
-	// This subtracts shooterPos (making geometry shooter‑centric) and then converts coordinates.
-	convert := func(v r3.Vector) r3.Vector {
-		local := v.Sub(shooterPos)
-		// In Source2: X = forward (East), Y = left (North), Z = up.
-		// In Blender we want: Forward = +X, Up = +Z.
-		// One common conversion is to swap the X and Y components and flip the sign of one axis.
-		return r3.Vector{
-			X: local.Y,  // Source2 Y becomes Blender X.
-			Y: -local.X, // Source2 X becomes Blender -Y.
-			Z: local.Z,  // Z remains the same.
-		}
-	}
+	fmt.Printf("FOV Cone - eyePos=%+v forward=%+v right=%+v up=%+v\n", eyePos, forward, right, up)
+	fmt.Printf("FOV Cone corners - TR=%+v TL=%+v BR=%+v BL=%+v\n", topRight, topLeft, bottomRight, bottomLeft)
 
 	fmt.Fprintf(w, "\no fov_cone\n")
 	fmt.Fprintf(w, "usemtl %s\n", material)
-	// Write vertices after conversion.
-	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", convert(eyePos).X, convert(eyePos).Y, convert(eyePos).Z) // Apex
-	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", convert(topRight).X, convert(topRight).Y, convert(topRight).Z)
-	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", convert(topLeft).X, convert(topLeft).Y, convert(topLeft).Z)
-	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", convert(bottomRight).X, convert(bottomRight).Y, convert(bottomRight).Z)
-	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", convert(bottomLeft).X, convert(bottomLeft).Y, convert(bottomLeft).Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", eyePos.X, eyePos.Y, eyePos.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", topRight.X, topRight.Y, topRight.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", topLeft.X, topLeft.Y, topLeft.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", bottomRight.X, bottomRight.Y, bottomRight.Z)
+	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", bottomLeft.X, bottomLeft.Y, bottomLeft.Z)
 
-	// Create lines for the cone visualization.
 	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+1)
 	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+2)
 	fmt.Fprintf(w, "l %d %d\n", *vertexIndex, *vertexIndex+3)
@@ -135,7 +116,6 @@ func WriteFOVCone(w io.Writer, eyePos, forward r3.Vector, material string, verte
 	*vertexIndex += 5
 }
 
-// WriteSphere writes a simple sphere at the given center.
 func WriteSphere(w io.Writer, center r3.Vector, radius float64, segments int, material string, vertexIndex *int) {
 	fmt.Fprintf(w, "\no hit_point\n")
 	fmt.Fprintf(w, "usemtl %s\n", material)
@@ -172,7 +152,6 @@ func WriteSphere(w io.Writer, center r3.Vector, radius float64, segments int, ma
 	*vertexIndex += len(vertices)
 }
 
-// WriteCone draws a cone between an apex and a base.
 func WriteCone(
 	w io.Writer,
 	apex, base r3.Vector,
@@ -187,8 +166,8 @@ func WriteCone(
 	apexIdx := *vertexIndex
 	*vertexIndex++
 	dir := base.Sub(apex).Normalize()
-	var u r3.Vector
 	up := r3.Vector{X: 0, Y: 0, Z: 1}
+	var u r3.Vector
 	if math.Abs(dir.Z) > 0.99 {
 		u = r3.Vector{X: 1, Y: 0, Z: 0}
 	} else {
@@ -216,8 +195,6 @@ func WriteCone(
 	fmt.Fprintf(w, "\n")
 }
 
-// CreateShooterCentricFOVUsingTargetDistance builds the OBJ using all geometry in Source2 space.
-// Conversion to Blender coordinates happens only at output time.
 func CreateShooterCentricFOVUsingTargetDistance(
 	tick int,
 	mapModel *Model,
@@ -229,19 +206,19 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	hitPoints []r3.Vector,
 	rayIntersections []r3.Vector,
 ) error {
-	// Compute distance to target and define maximum distance.
 	distToTarget := distanceToShooter(shooter, target.Position)
 	maxDistance := distToTarget + extraPadding
 
-	outputDir := "debug_visibility"
-	if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
+	outDir := "debug_visibility"
+	if err := os.MkdirAll(outDir, os.ModePerm); err != nil {
 		return err
 	}
-	if err := writeMTLFile(outputDir); err != nil {
+	if err := writeMTLFile(outDir); err != nil {
 		return err
 	}
+
 	fileName := fmt.Sprintf("shooter_centric_fov_tick_%d.obj", tick)
-	fpath := filepath.Join(outputDir, fileName)
+	fpath := filepath.Join(outDir, fileName)
 	f, err := os.Create(fpath)
 	if err != nil {
 		return err
@@ -255,27 +232,22 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	fmt.Fprintf(writer, "# Shooter-centric partial FOV debug\n")
 
 	vertexIndex := 1
-	shooterPos := shooter.Position
+	eyePos := GetEyePosition(shooter, playerModel)
 
-	// Define a composite conversion function.
-	// It takes a Source2 world-space vector, subtracts shooterPos to get shooter-centric coordinates,
-	// then converts to Blender space.
-	convert := func(v r3.Vector) r3.Vector {
-		local := v.Sub(shooterPos)
-		return r3.Vector{
-			X: local.Y,  // Source2 Y becomes Blender X.
-			Y: -local.X, // Source2 X becomes Blender -Y.
-			Z: local.Z,  // Z stays the same.
-		}
-	}
+	// 1) Write a single ray from eye in the forward direction
+	worldEye := eyePos
+	forward := shooter.ForwardVector()
+	rayEnd := worldEye.Add(forward.Mul(200.0)) // Make ray longer to match FOV cone
+	fmt.Printf("Writing ray: worldEye=%+v rayEnd=%+v forward=%+v\n", worldEye, rayEnd, forward)
+	WriteRay(writer, worldEye, rayEnd, false, "ray_material", &vertexIndex)
 
-	// Write shooter geometry using player model triangles.
-	fmt.Fprintf(writer, "o shooter\n")
+	// 2) Write the shooter geometry in world space
+	fmt.Fprintf(writer, "\no shooter\n")
 	fmt.Fprintf(writer, "usemtl shooter_material\n")
 	for _, tri := range playerModel.triangles {
-		v1 := convert(tri.V1.Add(shooter.Position))
-		v2 := convert(tri.V2.Add(shooter.Position))
-		v3 := convert(tri.V3.Add(shooter.Position))
+		v1 := tri.V1.Add(shooter.Position)
+		v2 := tri.V2.Add(shooter.Position)
+		v3 := tri.V3.Add(shooter.Position)
 		fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", v1.X, v1.Y, v1.Z)
 		fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", v2.X, v2.Y, v2.Z)
 		fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", v3.X, v3.Y, v3.Z)
@@ -283,13 +255,13 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		vertexIndex += 3
 	}
 
-	// Write target geometry.
+	// 3) Write the target geometry
 	fmt.Fprintf(writer, "\no target\n")
 	fmt.Fprintf(writer, "usemtl target_material\n")
 	for _, tri := range playerModel.triangles {
-		v1 := convert(tri.V1.Add(target.Position))
-		v2 := convert(tri.V2.Add(target.Position))
-		v3 := convert(tri.V3.Add(target.Position))
+		v1 := tri.V1.Add(target.Position)
+		v2 := tri.V2.Add(target.Position)
+		v3 := tri.V3.Add(target.Position)
 		fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", v1.X, v1.Y, v1.Z)
 		fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", v2.X, v2.Y, v2.Z)
 		fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", v3.X, v3.Y, v3.Z)
@@ -297,17 +269,9 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		vertexIndex += 3
 	}
 
-	// Process and write map geometry (FOV checks use Source2 data with no extra +90 offset).
-	slog.Debug("Starting map geometry processing",
-		"totalTriangles", len(mapModel.triangles),
-		"maxDistance", maxDistance)
-
-	eyePos := GetEyePosition(shooter, playerModel) // In Source2 space
-
+	// 4) Write the map geometry
 	fmt.Fprintf(writer, "\no partial_map\n")
 	fmt.Fprintf(writer, "usemtl map_material\n")
-
-	// Use the shooter data directly for FOV checks.
 	for _, tri := range mapModel.triangles {
 		vA := tri.V1
 		vB := tri.V2
@@ -326,54 +290,23 @@ func CreateShooterCentricFOVUsingTargetDistance(
 			(distC <= maxDistance && inFOVC)
 
 		if keep {
-			outA := convert(vA)
-			outB := convert(vB)
-			outC := convert(vC)
-			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", outA.X, outA.Y, outA.Z)
-			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", outB.X, outB.Y, outB.Z)
-			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", outC.X, outC.Y, outC.Z)
+			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", vA.X, vA.Y, vA.Z)
+			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", vB.X, vB.Y, vB.Z)
+			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", vC.X, vC.Y, vC.Z)
 			fmt.Fprintf(writer, "f %d %d %d\n", vertexIndex, vertexIndex+1, vertexIndex+2)
 			vertexIndex += 3
 		}
 	}
 
-	slog.Debug("Finished map geometry processing",
-		"trianglesKept", vertexIndex/3)
-
-	// Write FOV cone using raw Source2 data.
+	// 5) Write FOV cone
 	if includeCone {
-		sourceEyePos := GetEyePosition(shooter, playerModel) // Source2 space
-		sourceForward := shooter.ForwardVector().Normalize() // Source2 forward vector from raw angles
-		// WriteFOVCone converts each vertex to Blender space internally.
-		WriteFOVCone(writer, sourceEyePos, sourceForward, "cone_material", &vertexIndex, shooterPos)
-	}
-
-	// Visualize rays.
-	points := playerModel.GetVisibilityPoints()
-	for _, bp := range points {
-		endPos := getCandidateWorldPoint(target, bp)
-		start := convert(GetEyePosition(shooter, playerModel))
-		end := convert(endPos)
-		WriteRay(writer, start, end, false, "ray_material", &vertexIndex)
-	}
-
-	// Visualize ray intersections.
-	for _, intersectionPoint := range rayIntersections {
-		localPoint := convert(intersectionPoint)
-		WriteSphere(writer, localPoint, 3.0, 8, "intersection_material", &vertexIndex)
-	}
-
-	// Visualize hit points.
-	for _, hitPoint := range hitPoints {
-		localHitPoint := convert(hitPoint)
-		WriteSphere(writer, localHitPoint, 5.0, 8, "hit_material", &vertexIndex)
+		WriteFOVCone(writer, eyePos, forward, "cone_material", &vertexIndex)
 	}
 
 	return nil
 }
 
-// CreateDebugOBJ writes an OBJ with shooter, target, optional map geometry, and a cone from eye->target.
-// Here, shooter and target geometry are written in Source2 space and then converted to Blender space only at output.
+// CreateDebugOBJ writes a simpler OBJ with shooter, target, and optionally map geometry and a cone.
 func CreateDebugOBJ(
 	tick int,
 	mapModel *Model,
@@ -392,6 +325,7 @@ func CreateDebugOBJ(
 	if err := writeMTLFile(outDir); err != nil {
 		return err
 	}
+
 	fileName := filepath.Join(outDir, fmt.Sprintf("debug_tick_%d.obj", tick))
 	f, err := os.Create(fileName)
 	if err != nil {
@@ -403,10 +337,9 @@ func CreateDebugOBJ(
 	defer writer.Flush()
 
 	fmt.Fprintf(writer, "mtllib debug_materials.mtl\n\n")
-
 	vertexIndex := 1
 
-	// Write shooter geometry.
+	// Shooter geometry (unconverted, for reference).
 	fmt.Fprintf(writer, "o shooter\n")
 	fmt.Fprintf(writer, "usemtl shooter_material\n")
 	for _, tri := range playerModel.TrianglesRaw() {
@@ -420,7 +353,7 @@ func CreateDebugOBJ(
 		vertexIndex += 3
 	}
 
-	// Write target geometry.
+	// Target geometry.
 	fmt.Fprintf(writer, "\no target\n")
 	fmt.Fprintf(writer, "usemtl target_material\n")
 	for _, tri := range playerModel.TrianglesRaw() {
@@ -434,7 +367,7 @@ func CreateDebugOBJ(
 		vertexIndex += 3
 	}
 
-	// Write map geometry.
+	// Optional map geometry.
 	if includeMap && mapModel != nil {
 		fmt.Fprintf(writer, "\no map_geometry\n")
 		fmt.Fprintf(writer, "usemtl map_material\n")
@@ -454,7 +387,7 @@ func CreateDebugOBJ(
 		WriteCone(f, eyePos, targetPos, coneRadius, "cone_material", &vertexIndex)
 	}
 
-	// Write hit points.
+	// Hit points.
 	for _, hitPoint := range hitPoints {
 		WriteSphere(f, hitPoint, 5.0, 8, "hit_material", &vertexIndex)
 	}

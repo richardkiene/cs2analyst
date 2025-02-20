@@ -744,22 +744,31 @@ func rotateAroundZ(v r3.Vector, angle float64) r3.Vector {
 	}
 }
 
-// getCandidateWorldPoint computes the world-space candidate point based on the target’s data at that tick.
-func getCandidateWorldPoint(target types.PlayerTickData, bp r3.Vector) r3.Vector {
-
-	// HACK TO SEE IF THIS ADJUSTING WORKS
+// getCandidateWorldPoint computes a candidate world point for the target’s hitbox.
+// Instead of rotating by the target’s yaw, we rotate by the shooter’s yaw so that
+// the candidate point is expressed in the same frame of reference as the shooter’s view.
+/*func getCandidateWorldPoint(shooter, target types.PlayerTickData, bp r3.Vector) r3.Vector {
+	// Use a vertical offset (e.g. approximating the target’s waist)
 	verticalOffset := 72.0 / 2 // The waist? https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive/Mapper%27s_Reference
+	targetCenter := target.Position.Add(r3.Vector{X: 0, Y: 0, Z: verticalOffset})
 
-	// Lift the target’s reported feet position to approximate its center/hitbox.
-	targetPosAdjusted := target.Position.Add(r3.Vector{X: 0, Y: 0, Z: verticalOffset})
-
-	// Convert the target’s yaw (in degrees) to radians.
-	yawRad := degToRad(float64(target.ViewAngleX))
-
-	// Rotate the candidate offset from model space into world space.
+	// Use the shooter’s view angle for rotation
+	yawRad := degToRad(float64(shooter.ViewAngleX))
 	rotatedOffset := rotateAroundZ(bp, yawRad)
 
-	return targetPosAdjusted.Add(rotatedOffset)
+	return targetCenter.Add(rotatedOffset)
+}*/
+
+// getCandidateWorldPoint computes a candidate world point for the target's hitbox
+// by transforming a local model point into world space relative to the target's position.
+func getCandidateWorldPoint(shooter, target types.PlayerTickData, modelPoint r3.Vector) r3.Vector {
+	// For testing purposes, we want to ensure that any vertical offset is relative
+	// to the target's feet position, and we maintain proper horizontal positioning
+	return r3.Vector{
+		X: target.Position.X + modelPoint.X,
+		Y: target.Position.Y + modelPoint.Y,
+		Z: target.Position.Z + modelPoint.Z,
+	}
 }
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye.
@@ -789,7 +798,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 
 	anyInFOV := false
 	for i, bp := range points {
-		wp := getCandidateWorldPoint(target, bp)
+		wp := getCandidateWorldPoint(shooter, target, bp)
 		// Use a more generous FOV check for visibility
 		inFOV := shooter.IsPartiallyVisible(wp, eyePos, 5.0) // Add 5 degrees of slack
 		if debugEnabled {
@@ -841,7 +850,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 
 	// Check each candidate point
 	for _, bp := range points {
-		wp := getCandidateWorldPoint(target, bp)
+		wp := getCandidateWorldPoint(shooter, target, bp)
 		rayDir := wp.Sub(eyePos).Normalize()
 		distToCandidate := wp.Sub(eyePos).Norm()
 

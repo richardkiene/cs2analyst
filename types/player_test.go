@@ -8,6 +8,46 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// Test that ForwardVector returns the expected direction in Source2.
+// For example, if ViewAngleX=90 and ViewAngleY=0, then we expect forward = (1,0,0).
+func TestForwardVectorEast(t *testing.T) {
+	shooter := PlayerTickData{
+		ViewAngleX: 90,
+		ViewAngleY: 0,
+	}
+	got := shooter.ForwardVector()
+	want := r3.Vector{X: 1, Y: 0, Z: 0}
+	assertVectorsEqual(t, want, got, 0.0001, "Forward vector for shooter looking east")
+}
+
+// Test that when the shooter is looking north (ViewAngleX=0, ViewAngleY=0) the right vector is computed correctly.
+// In Source2, if forward is (0,1,0) then right should be (1,0,0).
+func TestRightVectorConsistency(t *testing.T) {
+	shooter := PlayerTickData{
+		ViewAngleX: 0,
+		ViewAngleY: 0,
+	}
+	forward := shooter.ForwardVector() // Expected: (0,1,0)
+	up := r3.Vector{X: 0, Y: 0, Z: 1}  // Global up in Source2
+	right := forward.Cross(up).Normalize()
+	expectedRight := r3.Vector{X: 1, Y: 0, Z: 0}
+	assertVectorsEqual(t, expectedRight, right, 0.0001, "Right vector when shooter looks north")
+}
+
+func TestRightVectorCalculation(t *testing.T) {
+	// Shooter looking north: (ViewAngleX=0° means facing north (+Y)).
+	shooter := PlayerTickData{
+		ViewAngleX: 0,
+		ViewAngleY: 0,
+	}
+	forward := shooter.ForwardVector() // expected to be (0, 1, 0)
+	up := r3.Vector{X: 0, Y: 0, Z: 1}  // global up in Source2
+	right := forward.Cross(up).Normalize()
+	// In Source2: if forward is (0,1,0) then right should be (1,0,0)
+	expectedRight := r3.Vector{X: 1, Y: 0, Z: 0}
+	assertVectorsEqual(t, expectedRight, right, 0.0001, "Right vector for shooter looking north")
+}
+
 // TestForwardVectorCoordinateSystem verifies that ForwardVector follows Source2 conventions
 func TestForwardVectorCoordinateSystem(t *testing.T) {
 	tests := []struct {
@@ -255,15 +295,7 @@ func TestIsInFieldOfViewFromEye(t *testing.T) {
 // Helper functions
 
 func assertVectorsEqual(t *testing.T, want, got r3.Vector, tolerance float64, msg string) {
-	// Normalize both vectors for comparison
-	want = want.Normalize()
-	got = got.Normalize()
-
 	assert.InDelta(t, want.X, got.X, tolerance, msg+" (X component)")
 	assert.InDelta(t, want.Y, got.Y, tolerance, msg+" (Y component)")
 	assert.InDelta(t, want.Z, got.Z, tolerance, msg+" (Z component)")
-}
-
-func degToRad(deg float64) float64 {
-	return deg * math.Pi / 180.0
 }
