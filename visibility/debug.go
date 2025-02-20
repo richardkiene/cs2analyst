@@ -299,9 +299,9 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		}
 	}
 
-	// Write FOV cone using vector to target as forward direction
+	// Write FOV cone using chosen direction
 	if includeCone {
-		WriteFOVCone(writer, eyePos, toTarget, "cone_material", &vertexIndex)
+		WriteFOVCone(writer, eyePos, direction, "cone_material", &vertexIndex) // Use the direction we computed
 	}
 
 	return nil

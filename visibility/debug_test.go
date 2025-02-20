@@ -104,6 +104,7 @@ func TestObjFileDirectionConsistency(t *testing.T) {
 	t.Logf("Eye position: %+v", eyePos)
 	t.Logf("Vector to target: %+v", toTarget)
 
+	// Add a debug print to see what direction we're passing
 	err := CreateShooterCentricFOVUsingTargetDistance(
 		84144,
 		mapModel,
