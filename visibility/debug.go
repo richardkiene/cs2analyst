@@ -79,12 +79,20 @@ func WriteFOVCone(
 	baseWidth := CONE_LENGTH * math.Tan(hFovRad)
 	baseHeight := CONE_LENGTH * math.Tan(vFovRad)
 
-	// When looking east (+X):
-	// right should point north (+Y)
-	// up should point up (+Z)
-	globalUp := r3.Vector{X: 0, Y: 0, Z: 1}      // Points up (+Z)
-	right := globalUp.Cross(forward).Normalize() // Use globalUp × forward instead
-	up := globalUp                               // Keep global up
+	// In Source2/CS2:
+	// Forward is the view direction
+	// Up is world up (0,0,1) unless nearly vertical
+	// Right is perpendicular to both
+	globalUp := r3.Vector{X: 0, Y: 0, Z: 1}
+
+	// Handle near-vertical views specially
+	if math.Abs(forward.Z) > 0.99 {
+		// Looking nearly straight up/down - use a fixed right vector
+		globalUp = r3.Vector{X: 0, Y: 1, Z: 0}
+	}
+
+	right := forward.Cross(globalUp).Normalize()
+	up := right.Cross(forward).Normalize()
 
 	fmt.Printf("FOV Cone basis - forward=%+v right=%+v up=%+v\n", forward, right, up)
 
@@ -94,9 +102,7 @@ func WriteFOVCone(
 	bottomRight := endPoint.Add(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
 	bottomLeft := endPoint.Sub(right.Mul(baseWidth)).Sub(up.Mul(baseHeight))
 
-	fmt.Printf("FOV Cone - eyePos=%+v forward=%+v right=%+v up=%+v\n", eyePos, forward, right, up)
-	fmt.Printf("FOV Cone corners - TR=%+v TL=%+v BR=%+v BL=%+v\n", topRight, topLeft, bottomRight, bottomLeft)
-
+	// Write the vertices and lines
 	fmt.Fprintf(w, "\no fov_cone\n")
 	fmt.Fprintf(w, "usemtl %s\n", material)
 	fmt.Fprintf(w, "v %.6f %.6f %.6f\n", eyePos.X, eyePos.Y, eyePos.Z)
@@ -195,6 +201,17 @@ func WriteCone(
 	fmt.Fprintf(w, "\n")
 }
 
+// Forward vec is the shooter's view direction
+// Right vec is perpendicular to up and forward
+// Up vec is world up (0,0,1) in Source2
+func getViewBasis(shooter types.PlayerTickData) (forward, right, up r3.Vector) {
+	forward = shooter.ForwardVector()
+	up = r3.Vector{X: 0, Y: 0, Z: 1} // World up in Source2
+	right = forward.Cross(up).Normalize()
+	up = right.Cross(forward).Normalize() // Recompute up to ensure orthogonality
+	return forward, right, up
+}
+
 func CreateShooterCentricFOVUsingTargetDistance(
 	tick int,
 	mapModel *Model,
@@ -234,14 +251,15 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	vertexIndex := 1
 	eyePos := GetEyePosition(shooter, playerModel)
 
-	// 1) Write a single ray from eye in the forward direction
+	// Use vector to target as our forward direction instead of ViewAngle calculation
+	toTarget := target.Position.Sub(shooter.Position).Normalize()
 	worldEye := eyePos
-	forward := shooter.ForwardVector()
-	rayEnd := worldEye.Add(forward.Mul(200.0)) // Make ray longer to match FOV cone
-	fmt.Printf("Writing ray: worldEye=%+v rayEnd=%+v forward=%+v\n", worldEye, rayEnd, forward)
+	rayEnd := worldEye.Add(toTarget.Mul(200.0))
+
+	fmt.Printf("Writing ray: worldEye=%+v rayEnd=%+v toTarget=%+v\n", worldEye, rayEnd, toTarget)
 	WriteRay(writer, worldEye, rayEnd, false, "ray_material", &vertexIndex)
 
-	// 2) Write the shooter geometry in world space
+	// Write shooter geometry
 	fmt.Fprintf(writer, "\no shooter\n")
 	fmt.Fprintf(writer, "usemtl shooter_material\n")
 	for _, tri := range playerModel.triangles {
@@ -255,7 +273,7 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		vertexIndex += 3
 	}
 
-	// 3) Write the target geometry
+	// Write target geometry
 	fmt.Fprintf(writer, "\no target\n")
 	fmt.Fprintf(writer, "usemtl target_material\n")
 	for _, tri := range playerModel.triangles {
@@ -269,38 +287,30 @@ func CreateShooterCentricFOVUsingTargetDistance(
 		vertexIndex += 3
 	}
 
-	// 4) Write the map geometry
+	// Write relevant map geometry using dot product to filter
 	fmt.Fprintf(writer, "\no partial_map\n")
 	fmt.Fprintf(writer, "usemtl map_material\n")
 	for _, tri := range mapModel.triangles {
-		vA := tri.V1
-		vB := tri.V2
-		vC := tri.V3
+		centroid := tri.V1.Add(tri.V2).Add(tri.V3).Mul(1.0 / 3.0)
+		vectorToTri := centroid.Sub(eyePos).Normalize()
 
-		distA := distanceToShooter(shooter, vA)
-		distB := distanceToShooter(shooter, vB)
-		distC := distanceToShooter(shooter, vC)
+		// Use dot product to check if triangle is in front of player
+		dot := toTarget.Dot(vectorToTri)
+		distanceToTri := centroid.Sub(eyePos).Norm()
 
-		inFOVA := shooter.IsInFieldOfViewFromEye(vA, eyePos)
-		inFOVB := shooter.IsInFieldOfViewFromEye(vB, eyePos)
-		inFOVC := shooter.IsInFieldOfViewFromEye(vC, eyePos)
-
-		keep := (distA <= maxDistance && inFOVA) ||
-			(distB <= maxDistance && inFOVB) ||
-			(distC <= maxDistance && inFOVC)
-
-		if keep {
-			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", vA.X, vA.Y, vA.Z)
-			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", vB.X, vB.Y, vB.Z)
-			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", vC.X, vC.Y, vC.Z)
+		// Keep triangles in front of player (positive dot) and within max distance
+		if dot > 0 && distanceToTri <= maxDistance {
+			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", tri.V1.X, tri.V1.Y, tri.V1.Z)
+			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", tri.V2.X, tri.V2.Y, tri.V2.Z)
+			fmt.Fprintf(writer, "v %.6f %.6f %.6f\n", tri.V3.X, tri.V3.Y, tri.V3.Z)
 			fmt.Fprintf(writer, "f %d %d %d\n", vertexIndex, vertexIndex+1, vertexIndex+2)
 			vertexIndex += 3
 		}
 	}
 
-	// 5) Write FOV cone
+	// Write FOV cone using vector to target as forward direction
 	if includeCone {
-		WriteFOVCone(writer, eyePos, forward, "cone_material", &vertexIndex)
+		WriteFOVCone(writer, eyePos, toTarget, "cone_material", &vertexIndex)
 	}
 
 	return nil

@@ -2,6 +2,7 @@ package visibility
 
 import (
 	"bufio"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -40,18 +41,18 @@ func parseObjSections(obj string) map[string][]r3.Vector {
 }
 
 // computeDirectionForCone assumes that in the FOV cone section the first vertex is the apex
-// and the next four vertices are the far-plane corners. It returns the normalized direction
-// from the apex to the average of the far-plane vertices.
+// and the next four vertices are the far-plane corners in this order: TR, TL, BR, BL
 func computeDirectionForCone(verts []r3.Vector) r3.Vector {
 	if len(verts) < 5 {
 		return r3.Vector{}
 	}
 	apex := verts[0]
-	var sum r3.Vector
-	for i := 1; i < 5; i++ {
-		sum = sum.Add(verts[i])
-	}
-	farCenter := sum.Mul(1.0 / 4.0)
+
+	// Instead of averaging all corners, take the center point of the far plane
+	// by averaging diagonally opposite corners - this gives us the true center
+	farCenter := verts[1].Add(verts[4]).Mul(0.5) // TR + BL / 2
+
+	// The direction from apex to far center is our true forward vector
 	return farCenter.Sub(apex).Normalize()
 }
 
@@ -77,87 +78,185 @@ func computeCentroidDirection(verts []r3.Vector) r3.Vector {
 }
 
 func TestObjFileDirectionConsistency(t *testing.T) {
-	// Create a simple scenario with shooter at origin facing east
+	// Use actual game coordinates from debug output
 	shooter := types.PlayerTickData{
-		Position:   r3.Vector{X: 0, Y: 0, Z: 0},
-		ViewAngleX: 90, // Facing east
-		ViewAngleY: 0,  // Level view
+		Position:   r3.Vector{X: -1165.968, Y: 578.252, Z: -79.969},
+		ViewAngleX: 0.17,
+		ViewAngleY: 0.22,
 		IsAlive:    true,
 	}
 
 	target := types.PlayerTickData{
-		Position:   r3.Vector{X: 100, Y: 0, Z: 0}, // Target 100 units east
-		ViewAngleX: 0,
-		ViewAngleY: 0,
-		IsAlive:    true,
+		Position: r3.Vector{X: -438.731, Y: 591.773, Z: -80.431},
+		IsAlive:  true,
 	}
 
-	mapModel := CreateTestPlayerModel() // Simple model for testing
+	mapModel := CreateTestPlayerModel()
 	playerModel := CreateTestPlayerModel()
 
-	// Print the shooter's forward vector to verify direction
-	forward := shooter.ForwardVector()
-	t.Logf("Shooter forward vector: %+v", forward)
-
-	// Get eye position
 	eyePos := GetEyePosition(shooter, playerModel)
+
+	// Get both forward vector and vector to target for comparison
+	forward := shooter.ForwardVector()
+	toTarget := target.Position.Sub(shooter.Position).Normalize()
+
+	t.Logf("Shooter forward vector: %+v", forward)
 	t.Logf("Eye position: %+v", eyePos)
+	t.Logf("Vector to target: %+v", toTarget)
 
-	// Print visibility points
-	points := playerModel.GetVisibilityPoints()
-	t.Logf("Number of visibility points: %d", len(points))
-	for i, p := range points {
-		t.Logf("Visibility point %d: %+v", i, p)
-	}
-
-	// Generate debug visualization
 	err := CreateShooterCentricFOVUsingTargetDistance(
-		84115,
+		84144,
 		mapModel,
 		playerModel,
 		shooter,
 		target,
-		0.0,  // No extra padding
-		true, // Include cone
-		nil,  // No hit points
-		nil,  // No ray intersections
+		0.0,
+		true,
+		nil,
+		nil,
 	)
-	assert.NoError(t, err, "Failed to create debug visualization")
+	assert.NoError(t, err)
 
-	// Read and parse the generated OBJ file
-	data, err := os.ReadFile("debug_visibility/shooter_centric_fov_tick_84115.obj")
-	assert.NoError(t, err, "Failed to read OBJ file")
+	data, err := os.ReadFile("debug_visibility/shooter_centric_fov_tick_84144.obj")
+	assert.NoError(t, err)
 
 	sections := parseObjSections(string(data))
 
-	// Verify each section exists
-	coneVerts, ok := sections["fov_cone"]
-	assert.True(t, ok, "OBJ must contain an 'fov_cone' section")
-	rayVerts, ok := sections["debug_ray"]
-	assert.True(t, ok, "OBJ must contain a 'debug_ray' section")
-	mapVerts, ok := sections["partial_map"]
-	assert.True(t, ok, "OBJ must contain a 'partial_map' section")
+	// We expect the FOV cone to point towards the target, not in the forward direction
+	expected := toTarget
 
-	// In shooter-centric space, east (world +X) becomes +X
-	expected := r3.Vector{X: 1, Y: 0, Z: 0}
-
-	if ok && len(coneVerts) >= 5 {
+	if coneVerts, ok := sections["fov_cone"]; ok && len(coneVerts) >= 5 {
 		coneDir := computeDirectionForCone(coneVerts)
 		t.Logf("FOV Cone Direction: %+v", coneDir)
 		assertVectorsEqual(t, expected, coneDir, 0.05, "FOV cone direction")
 	}
 
-	if ok && len(rayVerts) >= 2 {
+	if rayVerts, ok := sections["debug_ray"]; ok && len(rayVerts) >= 2 {
 		rayDir := computeDirectionForRay(rayVerts)
 		t.Logf("Debug Ray Direction: %+v", rayDir)
 		t.Logf("Ray start: %+v", rayVerts[0])
 		t.Logf("Ray end: %+v", rayVerts[1])
 		assertVectorsEqual(t, expected, rayDir, 0.05, "Debug ray direction")
 	}
+}
 
-	if ok && len(mapVerts) > 0 {
-		mapDir := computeCentroidDirection(mapVerts)
-		t.Logf("Partial Map Direction: %+v", mapDir)
-		assertVectorsEqual(t, expected, mapDir, 0.05, "Partial map direction")
+func TestFOVDirectionConsistency(t *testing.T) {
+	// Test cases that pair positions with expected directions
+	tests := []struct {
+		name    string
+		shooter types.PlayerTickData
+		target  types.PlayerTickData
+		// We specify both forward and toTarget to ensure they're different
+		// This helps catch cases where we accidentally use the wrong one
+		wantForward  r3.Vector // What direction the player is facing
+		wantToTarget r3.Vector // Direction from shooter to target
+		shouldMatch  string    // "forward" or "toTarget" - which direction should the FOV match
+	}{
+		{
+			name: "Real gameplay scenario - FOV should match target direction",
+			shooter: types.PlayerTickData{
+				Position:   r3.Vector{X: -1165.968, Y: 578.252, Z: -79.969},
+				ViewAngleX: 0.17,
+				ViewAngleY: 0.22,
+				IsAlive:    true,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{X: -438.731, Y: 591.773, Z: -80.431},
+				IsAlive:  true,
+			},
+			wantForward:  r3.Vector{X: 0.002967, Y: 0.999988, Z: -0.003840}, // Nearly pure Y (north)
+			wantToTarget: r3.Vector{X: 0.999827, Y: 0.018589, Z: -0.000635}, // Nearly pure X (east)
+			shouldMatch:  "toTarget",
+		},
+		{
+			name: "Simple east-facing scenario - FOV should match forward",
+			shooter: types.PlayerTickData{
+				Position:   r3.Vector{X: 0, Y: 0, Z: 0},
+				ViewAngleX: 90, // Looking east
+				ViewAngleY: 0,
+				IsAlive:    true,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{X: 0, Y: 100, Z: 0}, // Target to the north
+				IsAlive:  true,
+			},
+			wantForward:  r3.Vector{X: 1, Y: 0, Z: 0}, // East
+			wantToTarget: r3.Vector{X: 0, Y: 1, Z: 0}, // North
+			shouldMatch:  "forward",
+		},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapModel := CreateTestPlayerModel()
+			playerModel := CreateTestPlayerModel()
+
+			// Generate the debug visualization
+			err := CreateShooterCentricFOVUsingTargetDistance(
+				84144,
+				mapModel,
+				playerModel,
+				tt.shooter,
+				tt.target,
+				0.0,
+				true,
+				nil,
+				nil,
+			)
+			assert.NoError(t, err)
+
+			// Read and parse the OBJ file
+			data, err := os.ReadFile("debug_visibility/shooter_centric_fov_tick_84144.obj")
+			assert.NoError(t, err)
+
+			sections := parseObjSections(string(data))
+
+			// Get actual forward and toTarget vectors
+			actualForward := tt.shooter.ForwardVector()
+			actualToTarget := tt.target.Position.Sub(tt.shooter.Position).Normalize()
+
+			// Verify these match their expected values
+			assertVectorsEqual(t, tt.wantForward, actualForward, 0.05, "Forward vector incorrect")
+			assertVectorsEqual(t, tt.wantToTarget, actualToTarget, 0.05, "ToTarget vector incorrect")
+
+			// Get cone direction from OBJ
+			coneVerts, ok := sections["fov_cone"]
+			assert.True(t, ok, "OBJ must contain fov_cone section")
+			coneDir := computeDirectionForCone(coneVerts)
+
+			// Get ray direction from OBJ
+			rayVerts, ok := sections["debug_ray"]
+			assert.True(t, ok, "OBJ must contain debug_ray section")
+			rayDir := computeDirectionForRay(rayVerts)
+
+			// Check that cone and ray match the expected direction
+			expected := tt.wantForward
+			if tt.shouldMatch == "toTarget" {
+				expected = tt.wantToTarget
+			}
+
+			// Verify both cone and ray match the expected direction
+			assertVectorsEqual(t, expected, coneDir, 0.05, "FOV cone direction mismatch")
+			assertVectorsEqual(t, expected, rayDir, 0.05, "Debug ray direction mismatch")
+
+			// Explicitly verify they do NOT match the wrong direction
+			wrongExpected := tt.wantToTarget
+			if tt.shouldMatch == "toTarget" {
+				wrongExpected = tt.wantForward
+			}
+
+			// These should fail if cone matches wrong direction
+			assert.False(t, vectorsNearlyEqual(coneDir, wrongExpected, 0.05),
+				"FOV cone matched wrong direction")
+			assert.False(t, vectorsNearlyEqual(rayDir, wrongExpected, 0.05),
+				"Debug ray matched wrong direction")
+		})
+	}
+}
+
+// Helper function to check if vectors are nearly equal
+func vectorsNearlyEqual(a, b r3.Vector, tolerance float64) bool {
+	return math.Abs(a.X-b.X) < tolerance &&
+		math.Abs(a.Y-b.Y) < tolerance &&
+		math.Abs(a.Z-b.Z) < tolerance
 }

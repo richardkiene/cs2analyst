@@ -109,6 +109,11 @@ func (m *Model) TrianglesRaw() []types.Triangle {
 	return m.triangles
 }
 
+// AddTriangleForTest appends geometry to this model (for testing/demo).
+func (m *Model) AddTriangleForTest(tri types.Triangle) {
+	m.triangles = append(m.triangles, tri)
+}
+
 type LineOfSightSystem struct {
 	MapModel    *Model
 	PlayerModel *Model

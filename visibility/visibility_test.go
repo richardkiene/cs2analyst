@@ -130,37 +130,6 @@ func TestVisibilityFOVConsistency(t *testing.T) {
 	assert.True(t, shooter.IsInFieldOfViewFromEye(target.Position, eyePos), "Target directly in front should be in FOV")
 }
 
-/*func TestMapGeometryOrientation(t *testing.T) {
-	// Create a dummy shooter positioned at the origin,
-	// facing east: in Source2, that means ViewAngleX = 90°.
-	shooter := types.PlayerTickData{
-		Position:   r3.Vector{X: 0, Y: 0, Z: 0},
-		ViewAngleX: 90, // Facing east: Forward should be (1,0,0)
-		ViewAngleY: 0,
-		IsAlive:    true,
-	}
-	// For testing, use a simple player model with known bounds.
-	playerModel := createTestPlayerModel()
-	// Get the shooter’s eye position.
-	eyePos := GetEyePosition(shooter, playerModel)
-	// Create a dummy map triangle that lies entirely in front of the shooter.
-	// In Source2, "in front" means along +X. So choose vertices with X=210.
-	tri := types.Triangle{
-		V1: r3.Vector{X: 210, Y: -10, Z: 0},
-		V2: r3.Vector{X: 210, Y: 10, Z: 0},
-		V3: r3.Vector{X: 210, Y: 0, Z: 0},
-	}
-	// Compute the centroid of the triangle.
-	centroid := tri.V1.Add(tri.V2).Add(tri.V3).Mul(1.0 / 3.0)
-	// The direction from the shooter's eye to the centroid:
-	dir := centroid.Sub(eyePos).Normalize()
-	expectedDir := r3.Vector{X: 1, Y: 0, Z: 0} // expecting forward along +X
-	tol := 0.01
-	assert.InDelta(t, expectedDir.X, dir.X, tol, "Map triangle direction X")
-	assert.InDelta(t, expectedDir.Y, dir.Y, tol, "Map triangle direction Y")
-	assert.InDelta(t, expectedDir.Z, dir.Z, tol, "Map triangle direction Z")
-}*/
-
 // TestCoordinateSystemConsistency verifies that the coordinate system matches Source2's expectations
 func TestCoordinateSystemConsistency(t *testing.T) {
 	tests := []struct {
