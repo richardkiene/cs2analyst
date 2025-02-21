@@ -74,20 +74,24 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 		"msPerTick", msPerTick,
 		"tickTime", tickTime)
 
-	suspectPlayerID := 76561199139199601
 	// Collect damage events
 	for tick, playerMap := range tickData {
 		for steamID, player := range playerMap {
 			for targetID, damage := range player.DamageDealtToPlayer {
 				if damage.HealthDamage > 0 {
-					// TODO: Remove this horrible hack to isolate this player
-					if steamID == uint64(suspectPlayerID) {
-						if tick != 84144 {
-							continue
-						}
 
-						a.logger.Debug("Recorded damage event at tick 84144", "suspectPlayerID", suspectPlayerID)
-					}
+					a.logger.Debug("Recorded damage event",
+						"tick", tick,
+						"shooterSteamID", steamID,
+						"shooterPosition", player.Position,
+						"shooterViewAngleX", player.ViewAngleX,
+						"shooterViewAngleY", player.ViewAngleY,
+						"targetSteamID", targetID,
+						"targetPosition", playerMap[targetID].Position,
+						"targetViewAngleX", playerMap[targetID].ViewAngleX,
+						"targetViewAngleY", playerMap[targetID].ViewAngleY,
+					)
+
 					pair := playerPair{shooter: steamID, target: targetID}
 					damagesByPair[pair] = append(damagesByPair[pair], damageEvent{
 						tick:   tick,
