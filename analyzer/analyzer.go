@@ -82,11 +82,11 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 
 					a.logger.Debug("Recorded damage event",
 						"tick", tick,
-						"shooterSteamID", steamID,
+						"shooterSteamID", fmt.Sprintf("%d", steamID),
 						"shooterPosition", player.Position,
 						"shooterViewAngleX", player.ViewAngleX,
 						"shooterViewAngleY", player.ViewAngleY,
-						"targetSteamID", targetID,
+						"targetSteamID", fmt.Sprintf("%d", targetID),
 						"targetPosition", playerMap[targetID].Position,
 						"targetViewAngleX", playerMap[targetID].ViewAngleX,
 						"targetViewAngleY", playerMap[targetID].ViewAngleY,

@@ -57,11 +57,12 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 	rayDirection := computeAimDirection(shooter.ViewAngleX, shooter.ViewAngleY)
 
 	// Debug: Log Ray Path Details
-	log.Printf("Ray Start: %+v, Direction: %+v, Target: %+v, Max Distance: %.2f", shooterEyeLevel, rayDirection, targetEyeLevel, targetDistance)
+	//log.Printf("Ray Start: %+v, Direction: %+v, Target: %+v, Max Distance: %.2f", shooterEyeLevel, rayDirection, targetEyeLevel, targetDistance)
 
 	// Step 9: Perform line-of-sight check with map geometry using BVH intersection
 	hitPosition := r3.Vector{}
 	blocked, closestHit := rayIntersectsBVHClosestHit(shooterEyeLevel, rayDirection, mapModel.bvh, &hitPosition, targetDistance)
+	//blocked, _ := rayIntersectsBVHClosestHit(shooterEyeLevel, rayDirection, mapModel.bvh, &hitPosition, targetDistance)
 	if blocked {
 		log.Printf("Ray blocked at %+v (Closest hit), Expected Target at %+v", closestHit, targetEyeLevel)
 		return false // Something is blocking the view
@@ -72,22 +73,22 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 	targetWorldMax := targetModel.max.Add(target.Position)
 
 	// Debug: Log final world-space hitbox
-	log.Printf("Target Hitbox Bounds (Relative): Min: %+v, Max: %+v", targetModel.min, targetModel.max)
-	log.Printf("Target Hitbox Bounds (Adjusted World): Min: %+v, Max: %+v", targetWorldMin, targetWorldMax)
+	//log.Printf("Target Hitbox Bounds (Relative): Min: %+v, Max: %+v", targetModel.min, targetModel.max)
+	//log.Printf("Target Hitbox Bounds (Adjusted World): Min: %+v, Max: %+v", targetWorldMin, targetWorldMax)
 
 	// Step 11: Check if crosshair is on the target
 	if rayIntersectsAABB(shooterEyeLevel, rayDirection, targetWorldMin, targetWorldMax) {
-		log.Printf("Ray intersects hitbox AABB! Checking detailed intersection...")
+		//log.Printf("Ray intersects hitbox AABB! Checking detailed intersection...")
 		hitTarget := isRayHittingTargetWithDebug(shooterEyeLevel, rayDirection, targetModel, target.Position)
 		if hitTarget {
-			log.Printf("Ray successfully hit the target!")
+			//log.Printf("Ray successfully hit the target!")
 			return true
 		} else {
-			log.Printf("Ray passed through AABB but did NOT hit target's hitbox.")
+			//log.Printf("Ray passed through AABB but did NOT hit target's hitbox.")
 			return false
 		}
 	} else {
-		log.Printf("Ray did NOT intersect target's AABB. No possible hit.")
+		//log.Printf("Ray did NOT intersect target's AABB. No possible hit.")
 		return false
 	}
 }
@@ -95,7 +96,7 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 // isRayHittingTargetWithDebug adds debugging to check why the ray is not hitting the model
 func isRayHittingTargetWithDebug(rayOrigin, rayDir r3.Vector, targetModel Model, targetPos r3.Vector) bool {
 	if targetModel.triangles == nil || len(targetModel.triangles) == 0 {
-		log.Printf("Error: Target model has no triangles! Possible missing or uninitialized model data.")
+		//log.Printf("Error: Target model has no triangles! Possible missing or uninitialized model data.")
 		return false
 	}
 
@@ -105,19 +106,19 @@ func isRayHittingTargetWithDebug(rayOrigin, rayDir r3.Vector, targetModel Model,
 		worldV2 := tri.V2.Add(targetPos)
 		worldV3 := tri.V3.Add(targetPos)
 
-		log.Printf("Checking intersection with WORLD triangle: V1=%+v, V2=%+v, V3=%+v", worldV1, worldV2, worldV3)
+		//log.Printf("Checking intersection with WORLD triangle: V1=%+v, V2=%+v, V3=%+v", worldV1, worldV2, worldV3)
 		if worldV1 == (r3.Vector{}) || worldV2 == (r3.Vector{}) || worldV3 == (r3.Vector{}) {
-			log.Printf("Error: Triangle contains nil or zeroed vector! Skipping invalid triangle.")
+			//log.Printf("Error: Triangle contains nil or zeroed vector! Skipping invalid triangle.")
 			continue
 		}
 
 		hit := rayIntersectsTriangleWithHitDebug(rayOrigin, rayDir, types.Triangle{V1: worldV1, V2: worldV2, V3: worldV3})
 		if hit {
-			log.Printf("Ray hit a WORLD triangle in the model!")
+			//log.Printf("Ray hit a WORLD triangle in the model!")
 			return true
 		}
 	}
-	log.Printf("Ray did NOT hit any triangles in the model.")
+	//log.Printf("Ray did NOT hit any triangles in the model.")
 	return false
 }
 
@@ -126,9 +127,9 @@ func rayIntersectsTriangleWithHitDebug(rayOrigin, rayDir r3.Vector, tri types.Tr
 	hitPos := r3.Vector{}
 	hit := rayIntersectsTriangleWithHit(rayOrigin, rayDir, tri, &hitPos)
 	if hit {
-		log.Printf("Triangle hit detected: V1=%+v, V2=%+v, V3=%+v", tri.V1, tri.V2, tri.V3)
+		//log.Printf("Triangle hit detected: V1=%+v, V2=%+v, V3=%+v", tri.V1, tri.V2, tri.V3)
 	} else {
-		log.Printf("Triangle missed: V1=%+v, V2=%+v, V3=%+v", tri.V1, tri.V2, tri.V3)
+		//log.Printf("Triangle missed: V1=%+v, V2=%+v, V3=%+v", tri.V1, tri.V2, tri.V3)
 	}
 	return hit
 }
@@ -177,13 +178,13 @@ func rayIntersectsBVHClosestHit(rayOrigin, rayDir r3.Vector, node *BVHNode, hitP
 // rayIntersectsTriangleWithHit checks if a ray intersects a triangle and stores the hit position.
 func rayIntersectsTriangleWithHit(rayOrigin, rayDir r3.Vector, tri types.Triangle, hitPosition *r3.Vector) bool {
 	if hitPosition == nil {
-		log.Printf("Error: hitPosition is nil, cannot assign!")
+		//	log.Printf("Error: hitPosition is nil, cannot assign!")
 		return false
 	}
 
 	// Ensure triangle vertices are valid
 	if tri.V1 == (r3.Vector{}) || tri.V2 == (r3.Vector{}) || tri.V3 == (r3.Vector{}) {
-		log.Printf("Error: Triangle contains invalid vertices! Skipping intersection check.")
+		//log.Printf("Error: Triangle contains invalid vertices! Skipping intersection check.")
 		return false
 	}
 

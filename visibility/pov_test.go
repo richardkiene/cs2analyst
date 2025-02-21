@@ -31,7 +31,7 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 		expected bool
 	}{
 		{
-			name: "Back Alley v Apps tick 84144",
+			name: "Mirage -- Back Alley v Apps tick 84144",
 			shooter: types.PlayerTickData{
 				Position:   r3.Vector{X: -1165.9681396484375, Y: 578.2523193359375, Z: -79.96875},
 				ViewAngleX: 0.1654815673828125,
@@ -39,6 +39,66 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			},
 			target: types.PlayerTickData{
 				Position: r3.Vector{X: -438.730712890625, Y: 591.7733764648438, Z: -80.4307861328125},
+			},
+			expected: true,
+		},
+		/*{
+		  "time": "2025-02-21T07:46:19.9408698-07:00",
+		  "level": "DEBUG",
+		  "msg": "Recorded damage event",
+		  "tick": 136764,
+		  "shooterSteamID": 76561199811297728,
+		  "shooterPosition": { "X": -1652.548828125, "Y": 746.81103515625, "Z": -47.96875 },
+		  "shooterViewAngleX": -75.15026092529297,
+		  "shooterViewAngleY": 10.731582641601562,
+		  "targetSteamID": 76561199002420143,
+		  "targetPosition": { "X": -1515.4642333984375, "Y": 216.43341064453125, "Z": -166.96875 },
+		  "targetViewAngleX": 106.509033203125,
+		  "targetViewAngleY": -12.48699951171875
+		}*/
+		{
+			name: "Mirage -- Apps to Arches @ tick 136764 -- Shooter looking through grate window",
+			shooter: types.PlayerTickData{
+				Position:   r3.Vector{X: 130.04379272460938, Y: 130.04379272460938, Z: -39.96875},
+				ViewAngleX: -105.64865112304688,
+				ViewAngleY: 5.7420654296875,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{X: 16.8408145904541, Y: -2324.8759765625, Z: -39.96875},
+			},
+			expected: true,
+		},
+		/*{
+			"time": "2025-02-21T08:01:57.3524557-07:00",
+			"level": "DEBUG",
+			"msg": "Recorded damage event",
+			"tick": 22371,
+			"shooterSteamID": "76561198970966860",
+			"shooterPosition": {
+				"X": 130.04379272460938,
+				"Y": -1922.3170166015625,
+				"Z": -39.96875
+			},
+			"shooterViewAngleX": -105.64865112304688,
+			"shooterViewAngleY": 5.7420654296875,
+			"targetSteamID": "76561198863796909",
+			"targetPosition": {
+				"X": 16.8408145904541,
+				"Y": -2324.8759765625,
+				"Z": -39.96875
+			},
+			"targetViewAngleX": 74.34481811523438,
+			"targetViewAngleY": 3.966400146484375
+		}*/
+		{
+			name: "Mirage -- Top Plywood to Palace elbow @ tick 22371 -- Shooter looking directly at target with wall left and doorway forward",
+			shooter: types.PlayerTickData{
+				Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
+				ViewAngleX: -75.15026092529297,
+				ViewAngleY: 10.731582641601562,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
 			},
 			expected: true,
 		},

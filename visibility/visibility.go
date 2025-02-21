@@ -469,7 +469,7 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	var candidateShooterPos, candidateVictimPos r3.Vector
 
 	// Only log debug messages if the shooter matches the specified SteamID.
-	debugEnabled := (playerID == 76561199139199601)
+	debugEnabled := false //:= (playerID == 76561199139199601)
 
 	if debugEnabled {
 		slog.Debug("FindLastContinuousVisibilityStart called",
@@ -564,7 +564,9 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		// Use the loop variable tick when checking LOS so that the positions from that tick are used.
-		canSeeTarget, hitPoints, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, tick)
+		// TODO: If this works we finalize the switch to pov.go
+		//canSeeTarget, hitPoints, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, tick)
+		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
 		if debugEnabled {
 			eyePos := GetEyePosition(shooterTick, v.LosSystem.PlayerModel)
 			slog.Info("Visibility check",
@@ -572,8 +574,8 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 				"canSeeTarget", canSeeTarget,
 				"shooterPos", shooterTick.Position,
 				"eyePos", eyePos,
-				"targetPos", targetTick.Position,
-				"numHitPoints", len(hitPoints))
+				"targetPos", targetTick.Position)
+			// "numHitPoints", len(hitPoints))
 		}
 
 		if canSeeTarget {
