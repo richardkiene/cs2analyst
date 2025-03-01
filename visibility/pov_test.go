@@ -10,16 +10,16 @@ import (
 )
 
 func TestIsShooterPointingAtTarget(t *testing.T) {
-	mapModel, err := LoadMapModel("")
+	mapModel, err := ImportGLTFMapModel("C:\\Users\\richa\\OneDrive\\Desktop\\de_mirage_d.gltf", "de_mirage")
 	if err != nil {
 		t.Fatalf("Failed to load map model: %v", err)
 	}
 
-	shooterModel, err := LoadPlayerModel("")
+	shooterModel, err := ImportGLTFPlayerModel("C:\\Users\\richa\\OneDrive\\Desktop\\ctm_sas.gltf")
 	if err != nil {
 		t.Fatalf("Failed to load shooter model: %v", err)
 	}
-	targetModel, err := LoadPlayerModel("")
+	targetModel, err := ImportGLTFPlayerModel("C:\\Users\\richa\\OneDrive\\Desktop\\ctm_sas.gltf")
 	if err != nil {
 		t.Fatalf("Failed to load target model: %v", err)
 	}
@@ -127,5 +127,106 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 				t.Errorf("%s: expected %v, got %v", tt.name, tt.expected, result)
 			}
 		})
+	}
+}
+
+// Test function to validate coordinate system correctness
+func TestModelCoordinateSystem(t *testing.T) {
+	mapModel, mapModelErr := LoadMapModel("test_map.obj")
+	playerModel, playerModelErr := LoadPlayerModel("test_player.obj")
+
+	if mapModelErr != nil {
+		t.Fatal("Error loading map model: " + mapModelErr.Error())
+	}
+
+	if playerModelErr != nil {
+		t.Fatal("Error loading player model: " + playerModelErr.Error())
+	}
+
+	if len(mapModel.triangles) == 0 {
+		t.Fatalf("Map model contains no triangles. Possible incorrect loading.")
+	}
+	if len(playerModel.triangles) == 0 {
+		t.Fatalf("Player model contains no triangles. Possible incorrect loading.")
+	}
+
+	// Validate coordinate boundaries and right-handed coordinate system
+	for _, tri := range mapModel.triangles {
+		validateTriangle(t, tri, "map")
+	}
+
+	for _, tri := range playerModel.triangles {
+		validateTriangle(t, tri, "player")
+	}
+
+	// Validate general position of the player model
+	validatePlayerPosition(t, *playerModel)
+
+	t.Logf("Map and Player Model coordinate systems validated successfully.")
+}
+
+// Helper function to validate individual triangles
+func validateTriangle(t *testing.T, tri types.Triangle, modelType string) {
+	// Ensure coordinates are valid
+	for _, v := range []r3.Vector{tri.V1, tri.V2, tri.V3} {
+		if math.IsNaN(v.X) || math.IsNaN(v.Y) || math.IsNaN(v.Z) {
+			t.Errorf("Invalid triangle vertex in %s model: %+v", modelType, v)
+		}
+	}
+
+	// Ensure right-handed coordinate system (cross product should point correctly)
+	edge1 := tri.V2.Sub(tri.V1)
+	edge2 := tri.V3.Sub(tri.V1)
+	normal := r3.Vector{
+		X: edge1.Y*edge2.Z - edge1.Z*edge2.Y,
+		Y: edge1.Z*edge2.X - edge1.X*edge2.Z,
+		Z: edge1.X*edge2.Y - edge1.Y*edge2.X,
+	}
+	if normal.Z < 0 {
+		t.Errorf("Triangle in %s model has incorrect normal direction: %+v", modelType, normal)
+	}
+
+	// Check if Z-axis is dominant (should be "up" in Source2 coordinate system)
+	if math.Abs(normal.Z) < math.Abs(normal.Y) {
+		t.Errorf("Triangle in %s model has suspicious normal (Z component too small): %+v", modelType, normal)
+	}
+}
+
+// Helper function to check if the player model is in a reasonable location
+func validatePlayerPosition(t *testing.T, playerModel Model) {
+	var minX, minY, minZ, maxX, maxY, maxZ float64
+	minX, minY, minZ = math.MaxFloat64, math.MaxFloat64, math.MaxFloat64
+	maxX, maxY, maxZ = -math.MaxFloat64, -math.MaxFloat64, -math.MaxFloat64
+
+	for _, tri := range playerModel.triangles {
+		for _, v := range []r3.Vector{tri.V1, tri.V2, tri.V3} {
+			if v.X < minX {
+				minX = v.X
+			}
+			if v.Y < minY {
+				minY = v.Y
+			}
+			if v.Z < minZ {
+				minZ = v.Z
+			}
+			if v.X > maxX {
+				maxX = v.X
+			}
+			if v.Y > maxY {
+				maxY = v.Y
+			}
+			if v.Z > maxZ {
+				maxZ = v.Z
+			}
+		}
+	}
+
+	// Ensure the player model is within reasonable bounds
+	expectedHeight := 72.0 // Approximate CS2 player height
+	if maxZ-minZ < expectedHeight*0.8 || maxZ-minZ > expectedHeight*1.2 {
+		t.Errorf("Player model height is unexpected: %f", maxZ-minZ)
+	}
+	if maxX-minX < 10 || maxY-minY < 10 {
+		t.Errorf("Player model width/length is unexpectedly small: (%f, %f)", maxX-minX, maxY-minY)
 	}
 }

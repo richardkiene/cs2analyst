@@ -10,115 +10,117 @@ import (
 
 // IsShooterPointingAtTarget checks if the shooter is pointing at the target
 // while considering obstacles in the map model.
-func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel, mapModel Model) bool {
-	// Step 1: Compute the eye position of the shooter and target
+func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel) bool {
+	// Step 1: Compute the eye position of the shooter
 	shooterEyeLevel := shooter.Position
-	shooterEyeLevel.Z += 55 // Adjusted approximate eye level in CS2
-	targetEyeLevel := target.Position
-	targetEyeLevel.Z += 55 // Adjust target's position to their eye level
+	shooterEyeLevel.Z += 55 // Approximate eye level in CS2
 
-	// Step 2: Compute direction vector from shooter's eye to target's eye
+	// Step 2: Compute the expected yaw and pitch
 	dirVector := r3.Vector{
-		X: targetEyeLevel.X - shooterEyeLevel.X,
-		Y: targetEyeLevel.Y - shooterEyeLevel.Y,
-		Z: targetEyeLevel.Z - shooterEyeLevel.Z,
+		X: target.Position.X - shooterEyeLevel.X,
+		Y: target.Position.Y - shooterEyeLevel.Y,
+		Z: target.Position.Z + 55 - shooterEyeLevel.Z, // Aim at chest level
 	}
-	targetDistance := dirVector.Norm() // Distance to target
-
-	// Step 3: Compute expected yaw (horizontal angle)
-	expectedYaw := math.Atan2(dirVector.Y, dirVector.X) * (180.0 / math.Pi)
-	if expectedYaw < 0 {
-		expectedYaw += 360 // Normalize to [0, 360]
-	}
-
-	// Step 4: Compute expected pitch (vertical angle)
+	targetDistance := dirVector.Norm()
+	expectedYaw := NormalizeAngle(math.Atan2(dirVector.Y, dirVector.X) * (180.0 / math.Pi))
 	horizontalDistance := math.Sqrt(dirVector.X*dirVector.X + dirVector.Y*dirVector.Y)
 	expectedPitch := math.Atan2(dirVector.Z, horizontalDistance) * (180.0 / math.Pi)
 
-	// Step 5: Normalize shooter's angles
 	shooterYaw := NormalizeAngle(float64(shooter.ViewAngleX))
 	shooterPitch := float64(shooter.ViewAngleY)
-
-	// Step 6: Compute yaw and pitch difference
 	yawDifference := math.Abs(expectedYaw - shooterYaw)
 	if yawDifference > 180 {
-		yawDifference = 360 - yawDifference // Ensure shortest distance
+		yawDifference = 360 - yawDifference
 	}
-
 	pitchDifference := math.Abs(expectedPitch - shooterPitch)
 
-	// Step 7: Check if shooter is looking at target within FOV
-	fovThreshold := 50.0 // 100-degree FOV total
-	if yawDifference > fovThreshold || pitchDifference > fovThreshold {
+	if yawDifference > 50.0 || pitchDifference > 50.0 {
 		return false
 	}
 
-	// Step 8: Generate a ray from the shooter's eye position towards the target's eye level
-	rayDirection := computeAimDirection(shooter.ViewAngleX, shooter.ViewAngleY)
-
-	// Debug: Log Ray Path Details
-	//log.Printf("Ray Start: %+v, Direction: %+v, Target: %+v, Max Distance: %.2f", shooterEyeLevel, rayDirection, targetEyeLevel, targetDistance)
-
-	// Step 9: Perform line-of-sight check with map geometry using BVH intersection
-	hitPosition := r3.Vector{}
-	blocked, closestHit := rayIntersectsBVHClosestHit(shooterEyeLevel, rayDirection, mapModel.bvh, &hitPosition, targetDistance)
-	//blocked, _ := rayIntersectsBVHClosestHit(shooterEyeLevel, rayDirection, mapModel.bvh, &hitPosition, targetDistance)
-	if blocked {
-		log.Printf("Ray blocked at %+v (Closest hit), Expected Target at %+v", closestHit, targetEyeLevel)
-		return false // Something is blocking the view
+	// Step 3: Define multiple target points (head, shoulders, chest, pelvis, legs) for improved accuracy
+	targetPoints := []r3.Vector{
+		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 72}), // Head
+		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 64}), // Shoulders
+		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 55}), // Chest
+		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 40}), // Pelvis
+		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 30}), // Legs
 	}
 
-	// Step 10: Adjust target hitbox to world coordinates
-	targetWorldMin := targetModel.min.Add(target.Position)
-	targetWorldMax := targetModel.max.Add(target.Position)
-
-	// Debug: Log final world-space hitbox
-	//log.Printf("Target Hitbox Bounds (Relative): Min: %+v, Max: %+v", targetModel.min, targetModel.max)
-	//log.Printf("Target Hitbox Bounds (Adjusted World): Min: %+v, Max: %+v", targetWorldMin, targetWorldMax)
-
-	// Step 11: Check if crosshair is on the target
-	if rayIntersectsAABB(shooterEyeLevel, rayDirection, targetWorldMin, targetWorldMax) {
-		//log.Printf("Ray intersects hitbox AABB! Checking detailed intersection...")
-		hitTarget := isRayHittingTargetWithDebug(shooterEyeLevel, rayDirection, targetModel, target.Position)
-		if hitTarget {
-			//log.Printf("Ray successfully hit the target!")
-			return true
-		} else {
-			//log.Printf("Ray passed through AABB but did NOT hit target's hitbox.")
-			return false
+	// Step 4: Check if any target points are visible using multiple rays
+	visibleCount := 0
+	for _, targetPoint := range targetPoints {
+		if checkVisibilityWithOffsets(shooterEyeLevel, targetPoint, mapModel, targetDistance) {
+			visibleCount++
 		}
-	} else {
-		//log.Printf("Ray did NOT intersect target's AABB. No possible hit.")
-		return false
 	}
+
+	// If at least one point is visible, return true
+	if visibleCount > 0 {
+		log.Printf("Shooter has visibility to target (visible points: %d)", visibleCount)
+		return true
+	}
+
+	log.Printf("All target points blocked, no visibility to target.")
+	return false
+}
+
+// checkVisibilityWithOffsets tests visibility by slightly adjusting the ray
+func checkVisibilityWithOffsets(shooterPos, targetPos r3.Vector, mapModel MapModel, maxDist float64) bool {
+	offsets := []r3.Vector{
+		{X: 0, Y: 0, Z: 0},  // Center
+		{X: 1, Y: 0, Z: 0},  // Right
+		{X: -1, Y: 0, Z: 0}, // Left
+		{X: 0, Y: 1, Z: 0},  // Forward
+		{X: 0, Y: -1, Z: 0}, // Backward
+		{X: 0, Y: 0, Z: 1},  // Up
+		{X: 0, Y: 0, Z: -1}, // Down
+		// Diagonal offsets for improved accuracy
+		{X: 1, Y: 1, Z: 0},
+		{X: -1, Y: -1, Z: 0},
+		{X: 1, Y: -1, Z: 0},
+		{X: -1, Y: 1, Z: 0},
+	}
+
+	for _, offset := range offsets {
+		adjustedTarget := targetPos.Add(offset)
+		rayDirection := adjustedTarget.Sub(shooterPos).Normalize()
+		hitPosition := r3.Vector{}
+		//blocked, hitObject := rayIntersectsBVHClosestHit(shooterPos, rayDirection, mapModel.bvh, &hitPosition, maxDist)
+		blocked, _ := rayIntersectsBVHClosestHit(shooterPos, rayDirection, mapModel.BaseModel.bvh, &hitPosition, maxDist)
+
+		// Handle transparent objects like grates/windows
+		//if blocked && hitObject.IsTransparent {
+		//	continue // Ignore transparent objects and keep checking
+		//}
+
+		if !blocked {
+			return true
+		}
+	}
+	return false
 }
 
 // isRayHittingTargetWithDebug adds debugging to check why the ray is not hitting the model
 func isRayHittingTargetWithDebug(rayOrigin, rayDir r3.Vector, targetModel Model, targetPos r3.Vector) bool {
-	if targetModel.triangles == nil || len(targetModel.triangles) == 0 {
-		//log.Printf("Error: Target model has no triangles! Possible missing or uninitialized model data.")
+	if len(targetModel.triangles) == 0 {
+		log.Printf("Error: Target model has no triangles! Possible missing or uninitialized model data.")
 		return false
 	}
 
 	for _, tri := range targetModel.triangles {
-		// Transform triangle to world space
 		worldV1 := tri.V1.Add(targetPos)
 		worldV2 := tri.V2.Add(targetPos)
 		worldV3 := tri.V3.Add(targetPos)
 
-		//log.Printf("Checking intersection with WORLD triangle: V1=%+v, V2=%+v, V3=%+v", worldV1, worldV2, worldV3)
-		if worldV1 == (r3.Vector{}) || worldV2 == (r3.Vector{}) || worldV3 == (r3.Vector{}) {
-			//log.Printf("Error: Triangle contains nil or zeroed vector! Skipping invalid triangle.")
-			continue
-		}
-
-		hit := rayIntersectsTriangleWithHitDebug(rayOrigin, rayDir, types.Triangle{V1: worldV1, V2: worldV2, V3: worldV3})
-		if hit {
-			//log.Printf("Ray hit a WORLD triangle in the model!")
+		log.Printf("Checking intersection with WORLD triangle: V1=%+v, V2=%+v, V3=%+v", worldV1, worldV2, worldV3)
+		if hit := rayIntersectsTriangleWithHitDebug(rayOrigin, rayDir, types.Triangle{V1: worldV1, V2: worldV2, V3: worldV3}); hit {
+			log.Printf("Ray hit a WORLD triangle in the model!")
 			return true
 		}
 	}
-	//log.Printf("Ray did NOT hit any triangles in the model.")
+
+	log.Printf("Ray did NOT hit any triangles in the model.")
 	return false
 }
 

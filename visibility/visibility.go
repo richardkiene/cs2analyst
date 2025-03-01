@@ -1,14 +1,9 @@
 package visibility
 
 import (
-	"bufio"
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/golang/geo/r3"
@@ -23,7 +18,7 @@ type AABB struct {
 }
 
 // Used as a cache lookup key
-type gridKey struct {
+type GridKey struct {
 	x, y, z int
 }
 
@@ -58,11 +53,22 @@ type VisibilityResult struct {
 type Model struct {
 	triangles        []types.Triangle
 	min, max         r3.Vector
-	sectors          map[gridKey][]types.Triangle
+	sectors          map[GridKey][]types.Triangle
 	gridSize         float64
 	hitboxes         []Hitbox
 	visibilityPoints []r3.Vector
 	bvh              *BVHNode
+}
+
+type MapModel struct {
+	BaseModel       Model
+	namedAreas      []NamedArea
+	navMeshVertices [][3]float64
+}
+
+type NamedArea struct {
+	Name     string
+	Position r3.Vector
 }
 
 type Hitbox struct {
@@ -97,10 +103,23 @@ type MarginResult struct {
 
 func NewModel() *Model {
 	return &Model{
-		sectors:  make(map[gridKey][]types.Triangle),
+		sectors:  make(map[GridKey][]types.Triangle),
 		gridSize: 16.0,
 		min:      r3.Vector{X: 1e10, Y: 1e10, Z: 1e10},
 		max:      r3.Vector{X: -1e10, Y: -1e10, Z: -1e10},
+	}
+}
+
+func NewMapModel() *MapModel {
+	model := &Model{
+		sectors:  make(map[GridKey][]types.Triangle),
+		gridSize: 16.0,
+		min:      r3.Vector{X: 1e10, Y: 1e10, Z: 1e10},
+		max:      r3.Vector{X: -1e10, Y: -1e10, Z: -1e10},
+	}
+
+	return &MapModel{
+		BaseModel: *model,
 	}
 }
 
@@ -137,170 +156,6 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	return &los, nil
 }
 
-func LoadMapModel(path string) (*Model, error) {
-	m, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\world_output.obj")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load map model: %w", err)
-	}
-	return m, nil
-}
-
-func LoadPlayerModel(path string) (*Model, error) {
-	p, err := LoadOBJ("C:\\Users\\richa\\code\\CS2ResourceAPI\\GameDataService\\ModelOutput\\ctm_sas_output.obj")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load player model: %w", err)
-	}
-	return p, nil
-}
-
-// LoadOBJ reads an .obj file into a Model
-func LoadOBJ(filename string) (*Model, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("error opening file: %v", err)
-	}
-	defer file.Close()
-
-	model := NewModel()
-	var vertices []r3.Vector
-
-	// Hitbox parsing state
-	var currentHitbox *Hitbox
-	inHitboxSet := false
-	hitboxVertices := make([]r3.Vector, 0)
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-
-		switch fields[0] {
-		case "g":
-			if len(fields) > 1 && strings.HasPrefix(fields[1], "hitboxset_") {
-				inHitboxSet = true
-			} else {
-				inHitboxSet = false
-			}
-
-		case "#":
-			if inHitboxSet && len(fields) > 2 && fields[1] == "Hitbox:" {
-				// Process previous hitbox if exists
-				if currentHitbox != nil && len(hitboxVertices) > 0 {
-					currentHitbox.Vertices = hitboxVertices
-					model.hitboxes = append(model.hitboxes, *currentHitbox)
-				}
-
-				// Parse hitbox info from comment
-				hitboxInfo := strings.Join(fields[2:], " ")
-				parts := strings.Split(hitboxInfo, "(")
-				if len(parts) == 2 {
-					name := strings.TrimSpace(parts[0])
-					boneName := strings.Trim(parts[1], ")")
-					currentHitbox = &Hitbox{
-						Name:     name,
-						BoneName: boneName,
-						Type:     determineHitboxType(hitboxInfo),
-					}
-					hitboxVertices = make([]r3.Vector, 0)
-				}
-			}
-
-		case "v":
-			if len(fields) < 4 {
-				continue
-			}
-			x, _ := strconv.ParseFloat(fields[1], 64)
-			y, _ := strconv.ParseFloat(fields[2], 64)
-			z, _ := strconv.ParseFloat(fields[3], 64)
-			v := r3.Vector{X: x, Y: y, Z: z}
-
-			if inHitboxSet && currentHitbox != nil {
-				hitboxVertices = append(hitboxVertices, v)
-				// Update hitbox bounds
-				if len(hitboxVertices) == 1 {
-					currentHitbox.MinBounds = v
-					currentHitbox.MaxBounds = v
-				} else {
-					currentHitbox.MinBounds = minVector(currentHitbox.MinBounds, v)
-					currentHitbox.MaxBounds = maxVector(currentHitbox.MaxBounds, v)
-				}
-			} else {
-				vertices = append(vertices, v)
-				model.min = minVector(model.min, v)
-				model.max = maxVector(model.max, v)
-			}
-
-		case "f":
-			if !inHitboxSet && len(fields) >= 4 {
-				v1Idx, _ := strconv.Atoi(strings.Split(fields[1], "/")[0])
-				v2Idx, _ := strconv.Atoi(strings.Split(fields[2], "/")[0])
-				v3Idx, _ := strconv.Atoi(strings.Split(fields[3], "/")[0])
-
-				tri := types.Triangle{
-					V1: vertices[v1Idx-1],
-					V2: vertices[v2Idx-1],
-					V3: vertices[v3Idx-1],
-				}
-				model.triangles = append(model.triangles, tri)
-				if model.gridSize > 0 {
-					model.addTriangleToSectors(tri)
-				}
-			}
-		}
-	}
-
-	// Add final hitbox if exists
-	if currentHitbox != nil && len(hitboxVertices) > 0 {
-		currentHitbox.Vertices = hitboxVertices
-		model.hitboxes = append(model.hitboxes, *currentHitbox)
-	}
-
-	model.bvh = BuildBVH(model.triangles)
-
-	return model, nil
-}
-
-func determineHitboxType(info string) string {
-	lower := strings.ToLower(info)
-	switch {
-	case strings.Contains(lower, "sphere"):
-		return "Sphere"
-	case strings.Contains(lower, "capsule"):
-		return "Capsule"
-	default:
-		return "Box"
-	}
-}
-
-// addTriangleToSectors populates spatial partitioning for the model
-func (m *Model) addTriangleToSectors(t types.Triangle) {
-	minX := math.Min(t.V1.X, math.Min(t.V2.X, t.V3.X))
-	maxX := math.Max(t.V1.X, math.Max(t.V2.X, t.V3.X))
-	minY := math.Min(t.V1.Y, math.Min(t.V2.Y, t.V3.Y))
-	maxY := math.Max(t.V1.Y, math.Max(t.V2.Y, t.V3.Y))
-	minZ := math.Min(t.V1.Z, math.Min(t.V2.Z, t.V3.Z))
-	maxZ := math.Max(t.V1.Z, math.Max(t.V2.Z, t.V3.Z))
-
-	startX := int(minX / m.gridSize)
-	endX := int(maxX / m.gridSize)
-	startY := int(minY / m.gridSize)
-	endY := int(maxY / m.gridSize)
-	startZ := int(minZ / m.gridSize)
-	endZ := int(maxZ / m.gridSize)
-
-	for x := startX; x <= endX; x++ {
-		for y := startY; y <= endY; y++ {
-			for z := startZ; z <= endZ; z++ {
-				key := gridKey{x, y, z}
-				m.sectors[key] = append(m.sectors[key], t)
-			}
-		}
-	}
-}
-
 // Computes the eye position using the player model’s full height (i.e. the
 // difference between playerModel.max.Z and playerModel.min.Z). This assumes that
 // shooter.Position represents the feet.
@@ -320,14 +175,14 @@ func GetEyePosition(shooter types.PlayerTickData, playerModel *Model) r3.Vector 
 
 // GetRelevantMapGeometry returns triangles along the line from start->end
 func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
-	visited := make(map[gridKey]bool, 128)
+	visited := make(map[GridKey]bool, 128)
 	var relevant []types.Triangle
 
 	// Compute the direction and length.
 	dir := end.Sub(start)
 	length := dir.Norm()
 	if length == 0 {
-		key := gridKey{
+		key := GridKey{
 			x: int(math.Floor(start.X / m.gridSize)),
 			y: int(math.Floor(start.Y / m.gridSize)),
 			z: int(math.Floor(start.Z / m.gridSize)),
@@ -397,7 +252,7 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 		for dx := -corridor; dx <= corridor; dx++ {
 			for dy := -corridor; dy <= corridor; dy++ {
 				for dz := -corridor; dz <= corridor; dz++ {
-					key := gridKey{
+					key := GridKey{
 						x: cellX + dx,
 						y: cellY + dy,
 						z: cellZ + dz,
@@ -445,7 +300,7 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 		for dx := -endpointCorridor; dx <= endpointCorridor; dx++ {
 			for dy := -endpointCorridor; dy <= endpointCorridor; dy++ {
 				for dz := -endpointCorridor; dz <= endpointCorridor; dz++ {
-					key := gridKey{cx + dx, cy + dy, cz + dz}
+					key := GridKey{cx + dx, cy + dy, cz + dz}
 					if !visited[key] {
 						visited[key] = true
 						if triList, ok := m.sectors[key]; ok {
@@ -566,7 +421,11 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		// Use the loop variable tick when checking LOS so that the positions from that tick are used.
 		// TODO: If this works we finalize the switch to pov.go
 		//canSeeTarget, hitPoints, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, tick)
-		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
+		hackMapModel := &MapModel{
+			BaseModel: *v.LosSystem.MapModel,
+		}
+		//canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
+		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *hackMapModel)
 		if debugEnabled {
 			eyePos := GetEyePosition(shooterTick, v.LosSystem.PlayerModel)
 			slog.Info("Visibility check",
@@ -1063,77 +922,6 @@ func (a *AABB) IntersectRay(origin, dir r3.Vector, maxT float64) bool {
 		}
 	}
 	return tmin < maxT
-}
-
-// BuildBVH constructs a BVH from a slice of triangles.
-func BuildBVH(triangles []types.Triangle) *BVHNode {
-	if len(triangles) == 0 {
-		return nil
-	}
-	return buildBVHRecursive(triangles)
-}
-
-func buildBVHRecursive(triangles []types.Triangle) *BVHNode {
-	node := &BVHNode{}
-	// Compute bounding box for all triangles.
-	bbox := NewAABBFromTriangle(triangles[0])
-	for _, tri := range triangles[1:] {
-		triBBox := NewAABBFromTriangle(tri)
-		bbox = unionAABB(bbox, triBBox)
-	}
-	node.bbox = bbox
-
-	// If few triangles remain, make a leaf.
-	if len(triangles) <= maxTrianglesPerLeaf {
-		node.triangles = triangles
-		return node
-	}
-
-	// Choose the axis with the largest extent.
-	extents := bbox.Max.Sub(bbox.Min)
-	axis := 0
-	if extents.Y > extents.X {
-		axis = 1
-	}
-	if extents.Z > extents.X && extents.Z > extents.Y {
-		axis = 2
-	}
-
-	// Create a slice of (triangle, centroid) pairs.
-	type triCentroid struct {
-		tri      types.Triangle
-		centroid float64
-	}
-	arr := make([]triCentroid, len(triangles))
-	for i, tri := range triangles {
-		centroid := (tri.V1.Add(tri.V2).Add(tri.V3)).Mul(1.0 / 3.0)
-		var c float64
-		switch axis {
-		case 0:
-			c = centroid.X
-		case 1:
-			c = centroid.Y
-		case 2:
-			c = centroid.Z
-		}
-		arr[i] = triCentroid{tri: tri, centroid: c}
-	}
-	sort.Slice(arr, func(i, j int) bool {
-		return arr[i].centroid < arr[j].centroid
-	})
-	mid := len(arr) / 2
-	leftTris := make([]types.Triangle, mid)
-	rightTris := make([]types.Triangle, len(arr)-mid)
-	for i, v := range arr {
-		if i < mid {
-			leftTris[i] = v.tri
-		} else {
-			rightTris[i-mid] = v.tri
-		}
-	}
-	node.left = buildBVHRecursive(leftTris)
-	node.right = buildBVHRecursive(rightTris)
-	return node
 }
 
 // RayIntersectionDistance traverses the BVH and returns the smallest hit distance
