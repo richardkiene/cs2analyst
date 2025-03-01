@@ -75,8 +75,6 @@ func ImportGLTFMapModel(filePath string, mapName string) (*MapModel, error) {
 	// Create a new empty model
 	mapModel := NewMapModel()
 
-	TestFileAccess()
-
 	// Load the GLTF document
 	doc, err := gltf.Open(filePath)
 	fmt.Print(doc.Asset)
