@@ -13,20 +13,9 @@ import (
 
 const maxTrianglesPerLeaf = 8
 
-type AABB struct {
-	Min, Max r3.Vector
-}
-
 // Used as a cache lookup key
 type GridKey struct {
 	x, y, z int
-}
-
-type BVHNode struct {
-	bbox      AABB
-	left      *BVHNode
-	right     *BVHNode
-	triangles []types.Triangle // non-nil for leaf nodes
 }
 
 type Visibility struct {
@@ -52,8 +41,9 @@ type VisibilityResult struct {
 
 type Model struct {
 	triangles        []types.Triangle
+	materials        []MaterialProperties
 	min, max         r3.Vector
-	sectors          map[GridKey][]types.Triangle
+	sectors          map[GridKey][]int
 	gridSize         float64
 	hitboxes         []Hitbox
 	visibilityPoints []r3.Vector
@@ -103,24 +93,25 @@ type MarginResult struct {
 
 func NewModel() *Model {
 	return &Model{
-		sectors:  make(map[GridKey][]types.Triangle),
-		gridSize: 16.0,
-		min:      r3.Vector{X: 1e10, Y: 1e10, Z: 1e10},
-		max:      r3.Vector{X: -1e10, Y: -1e10, Z: -1e10},
+		sectors:   make(map[GridKey][]int),
+		gridSize:  16.0,
+		min:       r3.Vector{X: 1e10, Y: 1e10, Z: 1e10},
+		max:       r3.Vector{X: -1e10, Y: -1e10, Z: -1e10},
+		materials: make([]MaterialProperties, 0),
 	}
 }
 
 func NewMapModel() *MapModel {
-	model := &Model{
-		sectors:  make(map[GridKey][]types.Triangle),
-		gridSize: 16.0,
-		min:      r3.Vector{X: 1e10, Y: 1e10, Z: 1e10},
-		max:      r3.Vector{X: -1e10, Y: -1e10, Z: -1e10},
-	}
+	model := NewModel()
 
 	return &MapModel{
 		BaseModel: *model,
 	}
+}
+
+func (m *Model) AddTriangleWithMaterial(tri types.Triangle, material MaterialProperties) {
+	m.triangles = append(m.triangles, tri)
+	m.materials = append(m.materials, material)
 }
 
 // TrianglesRaw returns the model's triangle slice
@@ -174,9 +165,9 @@ func GetEyePosition(shooter types.PlayerTickData, playerModel *Model) r3.Vector 
 }
 
 // GetRelevantMapGeometry returns triangles along the line from start->end
-func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
+func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []int {
 	visited := make(map[GridKey]bool, 128)
-	var relevant []types.Triangle
+	var relevant []int
 
 	// Compute the direction and length.
 	dir := end.Sub(start)
@@ -727,7 +718,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 		closest := math.MaxFloat64
 		for _, tri := range geometry {
 			// Intersect the ray with 'tri'
-			if t, ok := RayIntersectsTriangle(eyePos, rayDir, tri); ok && t < closest {
+			if t, ok := RayIntersectsTriangle(eyePos, rayDir, mapModel.triangles[tri]); ok && t < closest {
 				closest = t
 				hitFound = true
 			}

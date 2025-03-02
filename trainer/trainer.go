@@ -101,7 +101,7 @@ type Trainer struct {
 	config      TrainingConfig
 	logger      *slog.Logger
 	model       *Model
-	mapModel    *visibility.Model
+	mapModel    *visibility.MapModel
 	playerModel *visibility.Model
 	metrics     []TrainingMetrics
 	mutex       sync.RWMutex
@@ -168,12 +168,12 @@ func (t *Trainer) initializeModel() (*Model, error) {
 func (t *Trainer) LoadModels(mapObjPath, playerObjPath string) error {
 	var err error
 
-	t.mapModel, err = visibility.LoadMapModel(mapObjPath)
+	t.mapModel, err = visibility.ImportGLTFMapModel(mapObjPath, "de_mirage")
 	if err != nil {
 		return fmt.Errorf("failed to load map model: %w", err)
 	}
 
-	t.playerModel, err = visibility.LoadPlayerModel(playerObjPath)
+	t.playerModel, err = visibility.ImportGLTFPlayerModel(playerObjPath)
 	if err != nil {
 		return fmt.Errorf("failed to load player model: %w", err)
 	}

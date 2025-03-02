@@ -32,3 +32,6 @@ debug_visibility/
 
 # training output
 training_metrics.json
+
+# ignore gltf models
+input_models/

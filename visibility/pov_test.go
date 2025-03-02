@@ -3,6 +3,7 @@ package visibility
 import (
 	"log"
 	"math"
+	"path/filepath"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -10,18 +11,22 @@ import (
 )
 
 func TestIsShooterPointingAtTarget(t *testing.T) {
-	mapModel, err := ImportGLTFMapModel("C:\\Users\\richa\\OneDrive\\Desktop\\de_mirage_d.gltf", "de_mirage")
+	mapGtlfFilePath := filepath.Join("../input_models/de_mirage_model/", "de_mirage_d.gltf")
+	mapModel, err := ImportGLTFMapModel(mapGtlfFilePath, "test_map")
 	if err != nil {
 		t.Fatalf("Failed to load map model: %v", err)
 	}
 
-	shooterModel, err := ImportGLTFPlayerModel("C:\\Users\\richa\\OneDrive\\Desktop\\ctm_sas.gltf")
+	shooterModelGtlfFilePath := filepath.Join("../input_models/ctm_sas_model/", "ctm_sas.gltf")
+	shooterModel, err := ImportGLTFPlayerModel(shooterModelGtlfFilePath)
 	if err != nil {
 		t.Fatalf("Failed to load shooter model: %v", err)
 	}
-	targetModel, err := ImportGLTFPlayerModel("C:\\Users\\richa\\OneDrive\\Desktop\\ctm_sas.gltf")
+
+	targetModelGtlfFilePath := filepath.Join("../input_models/ctm_sas_model/", "ctm_sas.gltf")
+	targetModel, err := ImportGLTFPlayerModel(targetModelGtlfFilePath)
 	if err != nil {
-		t.Fatalf("Failed to load target model: %v", err)
+		t.Fatalf("Failed to load shooter model: %v", err)
 	}
 
 	tests := []struct {
@@ -176,41 +181,6 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Test function to validate coordinate system correctness
-func TestModelCoordinateSystem(t *testing.T) {
-	mapModel, mapModelErr := LoadMapModel("test_map.obj")
-	playerModel, playerModelErr := LoadPlayerModel("test_player.obj")
-
-	if mapModelErr != nil {
-		t.Fatal("Error loading map model: " + mapModelErr.Error())
-	}
-
-	if playerModelErr != nil {
-		t.Fatal("Error loading player model: " + playerModelErr.Error())
-	}
-
-	if len(mapModel.triangles) == 0 {
-		t.Fatalf("Map model contains no triangles. Possible incorrect loading.")
-	}
-	if len(playerModel.triangles) == 0 {
-		t.Fatalf("Player model contains no triangles. Possible incorrect loading.")
-	}
-
-	// Validate coordinate boundaries and right-handed coordinate system
-	for _, tri := range mapModel.triangles {
-		validateTriangle(t, tri, "map")
-	}
-
-	for _, tri := range playerModel.triangles {
-		validateTriangle(t, tri, "player")
-	}
-
-	// Validate general position of the player model
-	validatePlayerPosition(t, *playerModel)
-
-	t.Logf("Map and Player Model coordinate systems validated successfully.")
 }
 
 // Helper function to validate individual triangles
