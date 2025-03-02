@@ -2,6 +2,7 @@ package visibility
 
 import (
 	"log"
+	"log/slog"
 	"math"
 
 	"github.com/golang/geo/r3"
@@ -57,7 +58,6 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 
 	// If at least one point is visible, return true
 	if visibleCount > 0 {
-		//log.Printf("Shooter has visibility to target (visible points: %d)", visibleCount)
 		return true
 	}
 
@@ -85,61 +85,142 @@ func checkVisibilityWithOffsets(shooterPos, targetPos r3.Vector, mapModel MapMod
 	for _, offset := range offsets {
 		adjustedTarget := targetPos.Add(offset)
 		rayDirection := adjustedTarget.Sub(shooterPos).Normalize()
-		hitPosition := r3.Vector{}
-		//blocked, hitObject := rayIntersectsBVHClosestHit(shooterPos, rayDirection, mapModel.bvh, &hitPosition, maxDist)
-		blocked, _ := rayIntersectsBVHClosestHit(shooterPos, rayDirection, mapModel.BaseModel.bvh, &hitPosition, maxDist)
 
-		// Handle transparent objects like grates/windows
-		//if blocked && hitObject.IsTransparent {
-		//	continue // Ignore transparent objects and keep checking
-		//}
-
-		if !blocked {
-			return true
+		// Check for intersections along the ray, handling transparent materials
+		if !checkRayWithTransparency(shooterPos, rayDirection, mapModel.BaseModel.bvh, maxDist) {
+			return true // No blocking obstacles found
 		}
 	}
 	return false
 }
 
-// rayIntersectsBVHClosestHit ensures the closest intersection is returned, avoiding false positives from distant objects
-func rayIntersectsBVHClosestHit(rayOrigin, rayDir r3.Vector, node *BVHNode, hitPosition *r3.Vector, maxDistance float64) (bool, r3.Vector) {
+// checkRayWithTransparency checks if a ray is blocked by non-transparent objects
+func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDistance float64) bool {
 	if node == nil {
-		return false, r3.Vector{}
+		return false // No node, no blocking
+	}
+
+	// Initialize variables for tracking hit information
+	currentOrigin := origin
+	remainingDistance := maxDistance
+
+	// TODO: debugging code, remove it
+	hitCount := 0
+	transparentHitCount := 0
+
+	// Continue tracing the ray through transparent objects
+	for {
+		hitPos := r3.Vector{}
+		blocked, material := rayIntersectsBVHClosestHit(currentOrigin, direction, node, &hitPos, remainingDistance)
+
+		// TODO: Debugging code, remove it
+		hitCount++
+
+		// If no hit or hit is beyond our range, we're done
+		if !blocked {
+			// TODO: debugging code, remove it
+			slog.Info("Ray passed through scene without hitting anything",
+				"hitCount", hitCount,
+				"transparentHits", transparentHitCount)
+			return false // No blocking
+		}
+
+		// If the material is transparent, continue from just beyond the hit point
+		if material.IsTransparent {
+			// TODO: debugging code, remove it
+			transparentHitCount++
+			slog.Info("Hit transparent material",
+				"materialName", material.Name,
+				"opacity", material.Opacity,
+				"hitPos", hitPos)
+
+			// Calculate new origin slightly beyond the hit point
+			hitDistance := currentOrigin.Sub(hitPos).Norm()
+
+			// Adjust the remaining distance and move the origin forward
+			remainingDistance -= hitDistance
+			if remainingDistance <= 0 {
+				// TODO: debugging code, remove it
+				slog.Info("Reached maximum distance after transparent hits",
+					"transparentHits", transparentHitCount)
+				return false // Reached maximum distance
+			}
+
+			// Move slightly beyond the hit point to avoid self-intersection
+			const epsilon = 0.01
+			currentOrigin = hitPos.Add(direction.Mul(epsilon))
+
+			// Continue the loop to check for the next hit
+			continue
+		}
+
+		// TODO: debugging code, remove it
+		slog.Info("Hit opaque material, ray blocked",
+			"materialName", material.Name,
+			"opacity", material.Opacity,
+			"hitPos", hitPos,
+			"totalHits", hitCount,
+			"transparentHits", transparentHitCount)
+
+		// Found a non-transparent blocking object
+		return true
+	}
+}
+
+// rayIntersectsBVHClosestHit ensures the closest intersection is returned, avoiding false positives from distant objects
+func rayIntersectsBVHClosestHit(rayOrigin, rayDir r3.Vector, node *BVHNode, hitPosition *r3.Vector, maxDistance float64) (bool, MaterialProperties) {
+	if node == nil {
+		return false, MaterialProperties{}
 	}
 
 	// Check if ray intersects the bounding box of this node
 	if !rayIntersectsAABB(rayOrigin, rayDir, node.bbox.Min, node.bbox.Max) {
-		return false, r3.Vector{}
+		return false, MaterialProperties{}
 	}
 
 	closestHit := r3.Vector{}
 	minDistance := maxDistance
+	var closestMaterial MaterialProperties
 
 	// If this is a leaf node, check each triangle
 	if len(node.triangles) > 0 {
-		for _, tri := range node.triangles {
+		for i, tri := range node.triangles {
 			if rayIntersectsTriangleWithHit(rayOrigin, rayDir, tri, hitPosition) {
 				dist := rayOrigin.Sub(*hitPosition).Norm()
 				if dist < minDistance {
 					minDistance = dist
 					closestHit = *hitPosition
+					// Get the material properties for this triangle
+					if i < len(node.materials) {
+						closestMaterial = node.materials[i]
+					}
 				}
 			}
 		}
-		return minDistance < maxDistance, closestHit
+		*hitPosition = closestHit
+		return minDistance < maxDistance, closestMaterial
 	}
 
 	// Recursively check child nodes for closer intersection
-	leftHit, leftPos := rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.left, hitPosition, minDistance)
-	rightHit, rightPos := rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.right, hitPosition, minDistance)
+	leftHit, leftMat := rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.left, hitPosition, minDistance)
+	leftDist := math.MaxFloat64
+	if leftHit {
+		leftDist = rayOrigin.Sub(*hitPosition).Norm()
+	}
 
-	if leftHit && (!rightHit || rayOrigin.Sub(leftPos).Norm() < rayOrigin.Sub(rightPos).Norm()) {
-		return true, leftPos
+	rightHit, rightMat := rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.right, hitPosition, minDistance)
+	rightDist := math.MaxFloat64
+	if rightHit {
+		rightDist = rayOrigin.Sub(*hitPosition).Norm()
+	}
+
+	if leftHit && (!rightHit || leftDist < rightDist) {
+		return true, leftMat
 	}
 	if rightHit {
-		return true, rightPos
+		return true, rightMat
 	}
-	return false, closestHit
+	return false, MaterialProperties{}
 }
 
 // rayIntersectsTriangleWithHit checks if a ray intersects a triangle and stores the hit position.

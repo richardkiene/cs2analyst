@@ -11,8 +11,6 @@ import (
 	"github.com/richardkiene/cs2analyst/types"
 )
 
-const maxTrianglesPerLeaf = 8
-
 // Used as a cache lookup key
 type GridKey struct {
 	x, y, z int
