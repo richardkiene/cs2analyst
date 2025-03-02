@@ -3,7 +3,6 @@ package analyzer
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"time"
 
@@ -155,8 +154,8 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 				// Calculate TTD
 				// Calculate time delta in milliseconds
 				tickDelta := dmg.tick - result.StartTick
-				if tickDelta < 0 {
-					a.logger.Warn("Invalid tick delta - damage before visibility",
+				if tickDelta <= 0 {
+					a.logger.Warn("Invalid tick delta - damage at same tick or before visibility",
 						"shooter", pair.shooter,
 						"target", pair.target,
 						"visibilityStartTick", result.StartTick,
@@ -248,7 +247,7 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 	return medianTimeToDamage, nil
 }
 
-func (a *Analyzer) GenerateDebugVisualization(
+/*func (a *Analyzer) GenerateDebugVisualization(
 	tick int,
 	shooterSteamID uint64,
 	targetSteamID uint64,
@@ -369,4 +368,4 @@ func (a *Analyzer) GenerateDebugVisualization(
 	}
 
 	return nil
-}
+}*/

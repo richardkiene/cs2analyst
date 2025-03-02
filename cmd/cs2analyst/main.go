@@ -191,7 +191,7 @@ func runAnalyze(cfg *config) error {
 		return fmt.Errorf("failed to process demo: %w", err)
 	}
 
-	if cfg.debugTick >= 0 && cfg.debugShooterID != 0 && cfg.debugTargetID != 0 {
+	/*if cfg.debugTick >= 0 && cfg.debugShooterID != 0 && cfg.debugTargetID != 0 {
 		logger.Info("Generating debug visualization",
 			"tick", cfg.debugTick,
 			"shooterID", cfg.debugShooterID,
@@ -206,7 +206,7 @@ func runAnalyze(cfg *config) error {
 			return fmt.Errorf("failed to generate debug visualization: %w", err)
 		}
 		return nil
-	}
+	}*/
 
 	// Analyze collected data
 	results, err := a.Analyze(c.PerTickInfo, c.TickRate, c.TickTime)

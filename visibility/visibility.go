@@ -134,7 +134,7 @@ func (m *Model) AddTriangleForTest(tri types.Triangle) {
 }
 
 type LineOfSightSystem struct {
-	MapModel    *Model
+	MapModel    *MapModel
 	PlayerModel *Model
 	logger      *slog.Logger
 }
@@ -143,11 +143,11 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	los := LineOfSightSystem{
 		logger: slog.Default(),
 	}
-	mapM, err := LoadMapModel("")
+	mapM, err := ImportGLTFMapModel("C:\\Users\\richa\\OneDrive\\Desktop\\de_mirage_d.gltf", "de_mirage")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
 	}
-	playerM, err := LoadPlayerModel("")
+	playerM, err := ImportGLTFPlayerModel("C:\\Users\\richa\\OneDrive\\Desktop\\ctm_sas.gltf")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
 	}
@@ -315,16 +315,13 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []types.Triangle {
 	return relevant
 }
 
+// Fixed FindLastContinuousVisibilityStart function for visibility.go
 func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
 	const maxWindowTicks = 320
-	var allowedGap = 64 //8 // maximum number of consecutive ticks where visibility can be missing
-
-	var candidateTick = -1
-	var candidateTime time.Duration
-	var candidateShooterPos, candidateVictimPos r3.Vector
+	var allowedGap = 64 // maximum number of consecutive ticks where visibility can be missing
 
 	// Only log debug messages if the shooter matches the specified SteamID.
-	debugEnabled := false //:= (playerID == 76561199139199601)
+	debugEnabled := (playerID == 76561199139199601)
 
 	if debugEnabled {
 		slog.Debug("FindLastContinuousVisibilityStart called",
@@ -335,12 +332,22 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 			"allowedGap", allowedGap)
 	}
 
+	// Start from the damage tick minus 1 to avoid the immediate frame
+	startSearchTick := currentTick - 1
+
+	// Track the first continuous visibility window we find
+	firstVisibleTick := -1
+	firstVisibilityWindowStart := -1
+	var firstShooterPos, firstVictimPos r3.Vector
+	var firstTime time.Duration
+
+	// Track the current visibility window state
 	gapCount := 0
 	lastVisibleTick := -1
 	continuousVisibilityStart := -1
 
-	// Iterate backwards from currentTick, but only up to maxWindowTicks
-	for tick := currentTick; tick >= 0 && (currentTick-tick) <= maxWindowTicks; tick-- {
+	// Iterate backwards from startSearchTick, but only up to maxWindowTicks
+	for tick := startSearchTick; tick >= 0 && (currentTick-tick) <= maxWindowTicks; tick-- {
 		if debugEnabled {
 			slog.Info("Processing tick",
 				"tick", tick,
@@ -350,26 +357,20 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		playerData, ok := perTickInfo[tick]
-
 		if !ok {
 			gapCount++
 			if debugEnabled {
 				slog.Debug("No player data for tick", "tick", tick, "gapCount", gapCount)
 			}
 			if gapCount > allowedGap {
-				if debugEnabled {
-					slog.Debug("Allowed gap exceeded (missing data), breaking", "tick", tick, "gapCount", gapCount)
-				}
 				break
 			}
 			continue
 		}
 
 		shooterTick, ok := playerData[playerID]
-
 		// If the shooter is blind, don't count it as a gap in visibility
 		if shooterTick.IsBlinded {
-			//reset gapCount since the player was flashed
 			if debugEnabled {
 				slog.Info("Shooter is blinded",
 					"tick", tick,
@@ -388,11 +389,6 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 					"gapCount", gapCount)
 			}
 			if gapCount > allowedGap {
-				if debugEnabled {
-					slog.Info("Allowed gap exceeded (shooter data), breaking",
-						"tick", tick,
-						"gapCount", gapCount)
-				}
 				break
 			}
 			continue
@@ -408,50 +404,49 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 					"gapCount", gapCount)
 			}
 			if gapCount > allowedGap {
-				if debugEnabled {
-					slog.Info("Allowed gap exceeded (target data), breaking",
-						"tick", tick,
-						"gapCount", gapCount)
-				}
 				break
 			}
 			continue
 		}
 
-		// Use the loop variable tick when checking LOS so that the positions from that tick are used.
-		// TODO: If this works we finalize the switch to pov.go
-		//canSeeTarget, hitPoints, _ := CanSeeTarget(shooterTick, targetTick, v.LosSystem.PlayerModel, v.LosSystem.MapModel, tick)
-		hackMapModel := &MapModel{
-			BaseModel: *v.LosSystem.MapModel,
-		}
-		//canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
-		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *hackMapModel)
+		// Check if the shooter can see the target at this tick
+		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
+
 		if debugEnabled {
 			eyePos := GetEyePosition(shooterTick, v.LosSystem.PlayerModel)
 			slog.Info("Visibility check",
 				"tick", tick,
 				"canSeeTarget", canSeeTarget,
 				"shooterPos", shooterTick.Position,
+				"shooterViewAngleX", shooterTick.ViewAngleX,
+				"shooterViewAngleY", shooterTick.ViewAngleY,
 				"eyePos", eyePos,
 				"targetPos", targetTick.Position)
-			// "numHitPoints", len(hitPoints))
 		}
 
 		if canSeeTarget {
+			// If this is the start of a new visibility window or first visible tick
 			if lastVisibleTick == -1 || (lastVisibleTick-tick) > allowedGap {
-				// Start of a new visibility window
 				if debugEnabled {
 					slog.Info("Starting new visibility window",
 						"tick", tick,
 						"lastVisibleTick", lastVisibleTick)
 				}
+
+				// We've found the start of a new visibility window
 				continuousVisibilityStart = tick
+
+				// If this is the first visibility window we've found
+				if firstVisibleTick == -1 {
+					firstVisibleTick = tick
+					firstVisibilityWindowStart = continuousVisibilityStart
+					firstShooterPos = shooterTick.Position
+					firstVictimPos = targetTick.Position
+					firstTime = shooterTick.DemoTime
+				}
 			}
+
 			lastVisibleTick = tick
-			candidateTick = continuousVisibilityStart
-			candidateTime = shooterTick.DemoTime
-			candidateShooterPos = shooterTick.Position
-			candidateVictimPos = targetTick.Position
 			gapCount = 0
 		} else {
 			gapCount++
@@ -460,38 +455,38 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 					"tick", tick,
 					"gapCount", gapCount)
 			}
-			if gapCount > allowedGap {
-				if debugEnabled {
-					slog.Info("Allowed gap exceeded, breaking",
-						"tick", tick,
-						"gapCount", gapCount,
-						"lastVisibleTick", lastVisibleTick,
-						"continuousVisibilityStart", continuousVisibilityStart)
-				}
+
+			// If we've exceeded the allowed gap, and we've already found a visibility window
+			if gapCount > allowedGap && firstVisibleTick != -1 {
+				// We've found our earliest continuous visibility window, so we can stop searching
 				break
 			}
 		}
 	}
 
-	if candidateTick != -1 {
+	// If we found at least one visibility window, return the earliest one
+	if firstVisibleTick != -1 {
 		if debugEnabled {
 			slog.Info("Found visibility result",
-				"candidateTick", candidateTick,
-				"startTime", candidateTime,
-				"shooterPos", candidateShooterPos,
-				"victimPos", candidateVictimPos)
+				"candidateTick", firstVisibilityWindowStart,
+				"startTime", firstTime,
+				"shooterPos", firstShooterPos,
+				"victimPos", firstVictimPos)
 		}
+
 		return VisibilityResult{
-			StartTick:  candidateTick,
-			StartTime:  candidateTime,
+			StartTick:  firstVisibilityWindowStart,
+			StartTime:  firstTime,
 			IsValid:    true,
-			ShooterPos: candidateShooterPos,
-			VictimPos:  candidateVictimPos,
+			ShooterPos: firstShooterPos,
+			VictimPos:  firstVictimPos,
 		}, true
 	}
+
 	if debugEnabled {
 		slog.Debug("No continuous visibility found")
 	}
+
 	return VisibilityResult{}, false
 }
 

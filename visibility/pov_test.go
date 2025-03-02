@@ -102,6 +102,54 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name: "Mirage -- Top-mid @ tick 182290 Shooter should *not* see player at Ticket Booth",
+			shooter: types.PlayerTickData{
+				Position:   r3.Vector{X: 89.64, Y: -556.01, Z: -110.93},
+				ViewAngleX: -158.29,
+				ViewAngleY: 41.00,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{X: -871.26, Y: -2319.52, Z: -106.42},
+			},
+			expected: false,
+		},
+		/*
+			{
+				"time": "2025-03-01T15:43:20.4160602-07:00",
+				"level": "INFO",
+				"msg": "Visibility check",
+				"tick": 182320,
+				"canSeeTarget": true,
+				"shooterPos": {
+					"X": 62.67142105102539,
+					"Y": -489.2166748046875,
+					"Z": -178.322021484375
+				},
+				"eyePos": {
+					"X": 62.67142105102539,
+					"Y": -489.2166748046875,
+					"Z": -133.37554863929748
+				},
+				"targetPos": {
+					"X": -794.6744384765625,
+					"Y": -2257.763427734375,
+					"Z": -178.94140625
+				}
+			}
+		*/
+		{
+			name: "Mirage -- Top-mid @ tick 182320 -- Shooter should not see player at Tripple / Ticket",
+			shooter: types.PlayerTickData{
+				Position:   r3.Vector{X: 62.67142105102539, Y: -489.2166748046875, Z: -178.322021484375},
+				ViewAngleX: -156.02542114257812,
+				ViewAngleY: 0.25543212890625,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{X: -794.6744384765625, Y: -2257.763427734375, Z: -178.94140625},
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {

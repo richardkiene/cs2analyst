@@ -57,7 +57,7 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 
 	// If at least one point is visible, return true
 	if visibleCount > 0 {
-		log.Printf("Shooter has visibility to target (visible points: %d)", visibleCount)
+		//log.Printf("Shooter has visibility to target (visible points: %d)", visibleCount)
 		return true
 	}
 
@@ -99,41 +99,6 @@ func checkVisibilityWithOffsets(shooterPos, targetPos r3.Vector, mapModel MapMod
 		}
 	}
 	return false
-}
-
-// isRayHittingTargetWithDebug adds debugging to check why the ray is not hitting the model
-func isRayHittingTargetWithDebug(rayOrigin, rayDir r3.Vector, targetModel Model, targetPos r3.Vector) bool {
-	if len(targetModel.triangles) == 0 {
-		log.Printf("Error: Target model has no triangles! Possible missing or uninitialized model data.")
-		return false
-	}
-
-	for _, tri := range targetModel.triangles {
-		worldV1 := tri.V1.Add(targetPos)
-		worldV2 := tri.V2.Add(targetPos)
-		worldV3 := tri.V3.Add(targetPos)
-
-		log.Printf("Checking intersection with WORLD triangle: V1=%+v, V2=%+v, V3=%+v", worldV1, worldV2, worldV3)
-		if hit := rayIntersectsTriangleWithHitDebug(rayOrigin, rayDir, types.Triangle{V1: worldV1, V2: worldV2, V3: worldV3}); hit {
-			log.Printf("Ray hit a WORLD triangle in the model!")
-			return true
-		}
-	}
-
-	log.Printf("Ray did NOT hit any triangles in the model.")
-	return false
-}
-
-// rayIntersectsTriangleWithHitDebug adds debugging to triangle intersection checks
-func rayIntersectsTriangleWithHitDebug(rayOrigin, rayDir r3.Vector, tri types.Triangle) bool {
-	hitPos := r3.Vector{}
-	hit := rayIntersectsTriangleWithHit(rayOrigin, rayDir, tri, &hitPos)
-	if hit {
-		//log.Printf("Triangle hit detected: V1=%+v, V2=%+v, V3=%+v", tri.V1, tri.V2, tri.V3)
-	} else {
-		//log.Printf("Triangle missed: V1=%+v, V2=%+v, V3=%+v", tri.V1, tri.V2, tri.V3)
-	}
-	return hit
 }
 
 // rayIntersectsBVHClosestHit ensures the closest intersection is returned, avoiding false positives from distant objects
@@ -225,36 +190,6 @@ func rayIntersectsTriangleWithHit(rayOrigin, rayDir r3.Vector, tri types.Triangl
 	return false
 }
 
-// computeAimDirection generates a normalized direction vector from view angles
-func computeAimDirection(yaw, pitch float32) r3.Vector {
-	yawRad := float64(yaw) * (math.Pi / 180.0)
-	pitchRad := float64(pitch) * (math.Pi / 180.0)
-
-	x := math.Cos(pitchRad) * math.Cos(yawRad)
-	y := math.Cos(pitchRad) * math.Sin(yawRad)
-	z := math.Sin(pitchRad)
-
-	return r3.Vector{X: x, Y: y, Z: z}
-}
-
-// isRayHittingTarget checks if the shooter's aim ray intersects with the target's model
-func isRayHittingTarget(rayOrigin, rayDirection r3.Vector, target Model) bool {
-	// First, check if the ray intersects with the bounding box of the model
-	if !rayIntersectsAABB(rayOrigin, rayDirection, target.min, target.max) {
-		return false // If it doesn't hit the bounding box, it won't hit the model
-	}
-
-	// Then, check against individual hitboxes
-	for _, hitbox := range target.hitboxes {
-		if rayIntersectsAABB(rayOrigin, rayDirection, hitbox.MinBounds, hitbox.MaxBounds) {
-			return true // Ray hits a hitbox
-		}
-	}
-
-	// Lastly, check against the triangles in the BVH for precise hit detection
-	return rayIntersectsBVH(rayOrigin, rayDirection, target.bvh)
-}
-
 // rayIntersectsAABB checks if a ray intersects an axis-aligned bounding box (AABB)
 func rayIntersectsAABB(rayOrigin, rayDir, minBounds, maxBounds r3.Vector) bool {
 	tMin := (minBounds.X - rayOrigin.X) / rayDir.X
@@ -291,63 +226,6 @@ func rayIntersectsAABB(rayOrigin, rayDir, minBounds, maxBounds r3.Vector) bool {
 	}
 
 	return true
-}
-
-// rayIntersectsBVH performs a ray-triangle intersection check using a BVH
-func rayIntersectsBVH(rayOrigin, rayDir r3.Vector, node *BVHNode) bool {
-	if node == nil {
-		return false
-	}
-
-	// Check if ray intersects the bounding box of this node
-	if !rayIntersectsAABB(rayOrigin, rayDir, node.bbox.Min, node.bbox.Max) {
-		return false
-	}
-
-	// If this is a leaf node, check each triangle
-	if len(node.triangles) > 0 {
-		for _, tri := range node.triangles {
-			if rayIntersectsTriangle2(rayOrigin, rayDir, tri) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Recursively check child nodes
-	return rayIntersectsBVH(rayOrigin, rayDir, node.left) || rayIntersectsBVH(rayOrigin, rayDir, node.right)
-}
-
-// rayIntersectsTriangle checks if a ray intersects a triangle
-func rayIntersectsTriangle2(rayOrigin, rayDir r3.Vector, tri types.Triangle) bool {
-	const epsilon = 1e-6
-	edge1 := tri.V2.Sub(tri.V1)
-	edge2 := tri.V3.Sub(tri.V1)
-
-	h := rayDir.Cross(edge2)
-	a := edge1.Dot(h)
-
-	if math.Abs(a) < epsilon {
-		return false // Ray is parallel to triangle
-	}
-
-	f := 1.0 / a
-	s := rayOrigin.Sub(tri.V1)
-	u := f * s.Dot(h)
-
-	if u < 0.0 || u > 1.0 {
-		return false
-	}
-
-	q := s.Cross(edge1)
-	v := f * rayDir.Dot(q)
-
-	if v < 0.0 || u+v > 1.0 {
-		return false
-	}
-
-	t := f * edge2.Dot(q)
-	return t > epsilon
 }
 
 func NormalizeAngle(angle float64) float64 {
