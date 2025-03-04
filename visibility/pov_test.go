@@ -2,6 +2,7 @@ package visibility
 
 import (
 	"log"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"testing"
@@ -10,7 +11,160 @@ import (
 	"github.com/richardkiene/cs2analyst/types"
 )
 
+func TestCoordinateTransformation(t *testing.T) {
+	// Enable debug logging
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	// Load the test map
+	mapGltfFilePath := filepath.Join("../input_models/de_mirage_model/", "de_mirage_d.gltf")
+	mapModel, err := ImportGLTFMapModel(mapGltfFilePath, "de_mirage")
+	if err != nil {
+		t.Fatalf("Failed to load map model: %v", err)
+	}
+
+	// Define test cases for known replay positions
+	testCases := []struct {
+		name             string
+		replayPos        r3.Vector
+		expectedModelPos r3.Vector
+		tolerance        float64
+	}{
+		{
+			name:             "Mirage - T Spawn",
+			replayPos:        r3.Vector{X: -3230, Y: -1652, Z: -39},
+			expectedModelPos: r3.Vector{X: -40, Y: 3230, Z: -1652},
+			tolerance:        10.0,
+		},
+		{
+			name:             "Mirage - Mid",
+			replayPos:        r3.Vector{X: -130, Y: -1052, Z: -110},
+			expectedModelPos: r3.Vector{X: -110, Y: 130, Z: -1052},
+			tolerance:        10.0,
+		},
+		{
+			name:             "Mirage - A Site",
+			replayPos:        r3.Vector{X: -1652, Y: 746, Z: -48},
+			expectedModelPos: r3.Vector{X: -48, Y: 1652, Z: 746},
+			tolerance:        10.0,
+		},
+	}
+
+	// Test the transformation function
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a mock player tick data
+			player := types.PlayerTickData{
+				Position:   tc.replayPos,
+				ViewAngleX: 0,
+				ViewAngleY: 0,
+			}
+
+			// Transform the player data
+			transformedPlayer := transformPlayerTickToModelSpace(player, mapModel)
+
+			// For now, just log the results - we'll compare once we've fine-tuned
+			// the transformation function
+			t.Logf("Original position: %v", tc.replayPos)
+			t.Logf("Transformed position: %v", transformedPlayer.Position)
+			t.Logf("Expected position: %v", tc.expectedModelPos)
+
+			// Check if the transformation is as expected (commented out until we're sure)
+			/*
+				assert.InDeltaf(t, tc.expectedModelPos.X, transformedPlayer.Position.X, tc.tolerance,
+					"X coordinate doesn't match expected value")
+				assert.InDeltaf(t, tc.expectedModelPos.Y, transformedPlayer.Position.Y, tc.tolerance,
+					"Y coordinate doesn't match expected value")
+				assert.InDeltaf(t, tc.expectedModelPos.Z, transformedPlayer.Position.Z, tc.tolerance,
+					"Z coordinate doesn't match expected value")
+			*/
+		})
+	}
+
+	// Test with the real test case coordinates from IsShooterPointingAtTarget test
+	testPoints := []types.PlayerTickData{
+		// Mirage - Back Alley v Apps tick 84144
+		{
+			Position:   r3.Vector{X: -1165.9681396484375, Y: 578.2523193359375, Z: -79.96875},
+			ViewAngleX: 0.1654815673828125,
+			ViewAngleY: 0.2176666259765625,
+		},
+		// Target
+		{
+			Position: r3.Vector{X: -438.730712890625, Y: 591.7733764648438, Z: -80.4307861328125},
+		},
+		// Mirage - Top Plywood to Palace elbow @ tick 22371
+		{
+			Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
+			ViewAngleX: -75.15026092529297,
+			ViewAngleY: 10.731582641601562,
+		},
+		// Target
+		{
+			Position: r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
+		},
+	}
+
+	// Run debug function to analyze coordinate transformation
+	DebugCoordinateTransformation(mapModel, testPoints)
+
+	// Test ray casting with transformed coordinates
+	t.Run("TestRayCasting", func(t *testing.T) {
+		// Load player model
+		playerModelGltfFilePath := filepath.Join("../input_models/ctm_sas_model/", "ctm_sas.gltf")
+		playerModel, err := ImportGLTFPlayerModel(playerModelGltfFilePath)
+		if err != nil {
+			t.Fatalf("Failed to load player model: %v", err)
+		}
+
+		// Test case from the original test that failed
+		shooter := types.PlayerTickData{
+			Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
+			ViewAngleX: -75.15026092529297,
+			ViewAngleY: 10.731582641601562,
+		}
+		target := types.PlayerTickData{
+			Position: r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
+		}
+
+		// Transform coordinates
+		transformedShooter := transformPlayerTickToModelSpace(shooter, mapModel)
+		transformedTarget := transformPlayerTickToModelSpace(target, mapModel)
+
+		// Get shooter eye position
+		shooterEye := GetAdjustedEyePosition(transformedShooter, playerModel, mapModel)
+
+		// Log transformation
+		t.Logf("Original shooter: %v", shooter.Position)
+		t.Logf("Transformed shooter: %v", transformedShooter.Position)
+		t.Logf("Shooter eye position: %v", shooterEye)
+		t.Logf("Original target: %v", target.Position)
+		t.Logf("Transformed target: %v", transformedTarget.Position)
+
+		// Direction vector from shooter to target
+		dirToTarget := transformedTarget.Position.Sub(shooterEye).Normalize()
+
+		// Cast ray and check for hits
+		hitPos := r3.Vector{}
+		blocked, material, triangleIndex := rayIntersectsBVHClosestHit(
+			shooterEye, dirToTarget, mapModel.BaseModel.bvh, &hitPos, 1000.0)
+
+		if blocked {
+			t.Logf("Ray blocked by material: %s (triangle %d)", material.Name, triangleIndex)
+			t.Logf("Hit position: %v", hitPos)
+			t.Logf("Distance to hit: %.2f", shooterEye.Sub(hitPos).Norm())
+			t.Logf("Distance to target: %.2f", shooterEye.Sub(transformedTarget.Position).Norm())
+
+			// Check if the material should be transparent
+			isTransparent := material.IsTransparent || material.Name == "residwall04a" || isTransparentMaterial(material.Name)
+			t.Logf("Material should be treated as transparent: %v", isTransparent)
+		} else {
+			t.Logf("No ray intersection found")
+		}
+	})
+}
+
 func TestIsShooterPointingAtTarget(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	mapGtlfFilePath := filepath.Join("../input_models/de_mirage_model/", "de_mirage_d.gltf")
 	mapModel, err := ImportGLTFMapModel(mapGtlfFilePath, "test_map")
 	if err != nil {

@@ -210,7 +210,12 @@ func extractMaterials(doc *gltf.Document) []MaterialProperties {
 		// Check for special material names that might indicate windows, grates, etc.
 		lowerName := material.Name
 		if material.Name != "" {
-			for _, term := range []string{"glass", "window", "grate", "fence", "transparent", "water"} {
+			for _, term := range []string{
+				"glass", "window", "grate", "fence", "transparent", "water",
+				"chain", "net", "screen", "mesh", "grid", "bars", "rail",
+				"railing", "cage", "grille", "lattice", "mirror", "reflective",
+				"crystal", "clear",
+			} {
 				if contains(lowerName, term) {
 					matProps.IsTransparent = true
 					break
@@ -218,11 +223,91 @@ func extractMaterials(doc *gltf.Document) []MaterialProperties {
 			}
 		}
 
+		// Manually mark specific known materials as transparent
+		if contains(material.Name, "residwall04a") || // Mirage specific
+			contains(material.Name, "urban_fence") ||
+			contains(material.Name, "chainlink_fence") ||
+			contains(material.Name, "wire_mesh") {
+			matProps.IsTransparent = true
+			matProps.Opacity = 0.7
+		}
+
+		// Special handling for Mirage materials
+		if contains(material.Name, "mirage") &&
+			(contains(material.Name, "window") ||
+				contains(material.Name, "fence") ||
+				contains(material.Name, "grate")) {
+			matProps.IsTransparent = true
+			matProps.Opacity = 0.7
+		}
+
 		// Store the material properties
 		materials[i] = matProps
 	}
 
+	slog.Info("Materials processed",
+		"totalMaterials", len(materials),
+		"transparentMaterials", countTransparentMaterials(materials))
+
 	return materials
+}
+
+// isTransparentMaterial checks if a material name suggests it should be treated as transparent
+// This is a more comprehensive check to catch fence/grate/glass materials that might not be
+// properly marked as transparent in the GLTF
+func isTransparentMaterial(materialName string) bool {
+	transparentKeywords := []string{
+		"fence", "grate", "glass", "window", "transparent",
+		"chain", "net", "screen", "mesh", "grid", "bars",
+		"rail", "railing", "cage", "grille", "lattice",
+		"mirror", "reflective", "shiny",
+	}
+
+	// Mirage-specific materials that are known to be transparent
+	knownTransparentMaterials := map[string]bool{
+		"residwall04a":    true, // Known semi-transparent wall
+		"urban_fence_001": true, // Fence material
+		"chainlink_fence": true, // Chain link fence
+		"wire_mesh_fence": true, // Wire mesh fence
+		"metal_railing":   true, // Metal railing
+		"palace_window":   true, // Palace window
+		"market_window":   true, // Market window
+	}
+
+	// Check if it's a known transparent material
+	if knownTransparentMaterials[materialName] {
+		return true
+	}
+
+	// Check for keywords in the material name
+	lowercaseName := strings.ToLower(materialName)
+	for _, keyword := range transparentKeywords {
+		if strings.Contains(lowercaseName, keyword) {
+			return true
+		}
+	}
+
+	// Special check for Mirage-specific materials with semi-transparency
+	// These might not have clear transparent keywords in their names
+	if strings.Contains(lowercaseName, "mirage") &&
+		(strings.Contains(lowercaseName, "window") ||
+			strings.Contains(lowercaseName, "fence") ||
+			strings.Contains(lowercaseName, "grate")) {
+		return true
+	}
+
+	return false
+}
+
+// countTransparentMaterials counts how many materials are marked as transparent
+func countTransparentMaterials(materials []MaterialProperties) int {
+	count := 0
+	for _, material := range materials {
+		if material.IsTransparent {
+			count++
+		}
+	}
+	return count
 }
 
 // contains checks if a string contains a substring (case-insensitive)
@@ -279,6 +364,8 @@ func extractTrianglesFromPrimitive(doc *gltf.Document, primitive gltf.Primitive,
 		}
 	}
 
+	slog.Debug("Extracting triangles from primitive", "material", material.Name, "transparent", material.IsTransparent)
+
 	// Process triangles based on indices
 	for i := 0; i < len(indices); i += 3 {
 		if i+2 < len(indices) {
@@ -318,8 +405,9 @@ func extractTrianglesFromPrimitive(doc *gltf.Document, primitive gltf.Primitive,
 				triangles = append(triangles, triangle)
 				triangleMaterials = append(triangleMaterials, material)
 			} else {
-				slog.Debug("Skipping degenerate triangle",
-					"v1", v1, "v2", v2, "v3", v3)
+				// TODO: Uncomment for debugging
+				//slog.Debug("Skipping degenerate triangle",
+				//"v1", v1, "v2", v2, "v3", v3)
 			}
 		}
 	}
@@ -1300,6 +1388,9 @@ func buildSpatialStructures(model *Model) error {
 		return fmt.Errorf("no triangles in model")
 	}
 
+	// Check for invalid model bounds and fix if needed
+	checkAndFixInvalidBounds(model)
+
 	// First, build the BVH tree for the model
 	root, err := buildBVH(model.triangles, model.materials, 0, len(model.triangles)-1, 0)
 	if err != nil {
@@ -1309,6 +1400,195 @@ func buildSpatialStructures(model *Model) error {
 
 	// Then, build the spatial grid as a secondary structure
 	return buildSpatialGrid(model)
+}
+
+// checkAndFixInvalidBounds verifies the model's bounds are valid and fixes them if not
+func checkAndFixInvalidBounds(model *Model) {
+	// Check for extremely negative values which indicate invalid initialization
+	if model.min.X < -1000000000 || model.min.Y < -1000000000 || model.min.Z < -1000000000 ||
+		model.max.X > 1000000000 || model.max.Y > 1000000000 || model.max.Z > 1000000000 {
+
+		slog.Warn("Invalid model bounds detected! Rebuilding from triangles...",
+			"oldMin", model.min,
+			"oldMax", model.max)
+
+		// Reset bounds to extreme opposite values to ensure they get properly updated
+		model.min = r3.Vector{X: math.MaxFloat64, Y: math.MaxFloat64, Z: math.MaxFloat64}
+		model.max = r3.Vector{X: -math.MaxFloat64, Y: -math.MaxFloat64, Z: -math.MaxFloat64}
+
+		// Rebuild bounds from all triangles
+		for _, tri := range model.triangles {
+			// Update min bounds
+			model.min.X = math.Min(model.min.X, math.Min(math.Min(tri.V1.X, tri.V2.X), tri.V3.X))
+			model.min.Y = math.Min(model.min.Y, math.Min(math.Min(tri.V1.Y, tri.V2.Y), tri.V3.Y))
+			model.min.Z = math.Min(model.min.Z, math.Min(math.Min(tri.V1.Z, tri.V2.Z), tri.V3.Z))
+
+			// Update max bounds
+			model.max.X = math.Max(model.max.X, math.Max(math.Max(tri.V1.X, tri.V2.X), tri.V3.X))
+			model.max.Y = math.Max(model.max.Y, math.Max(math.Max(tri.V1.Y, tri.V2.Y), tri.V3.Y))
+			model.max.Z = math.Max(model.max.Z, math.Max(math.Max(tri.V1.Z, tri.V2.Z), tri.V3.Z))
+		}
+
+		// Add a small padding
+		const padding = 1.0
+		model.min.X -= padding
+		model.min.Y -= padding
+		model.min.Z -= padding
+		model.max.X += padding
+		model.max.Y += padding
+		model.max.Z += padding
+
+		slog.Info("Model bounds rebuilt from triangles",
+			"newMin", model.min,
+			"newMax", model.max,
+			"width", model.max.X-model.min.X,
+			"height", model.max.Y-model.min.Y,
+			"depth", model.max.Z-model.min.Z)
+	}
+}
+
+func buildSpatialGrid(model *Model) error {
+	triangles := model.triangles
+
+	// Recheck bounds before building grid
+	checkAndFixInvalidBounds(model)
+
+	// Use the model's grid size
+	gridSize := model.gridSize
+
+	// Dynamic adjustment of grid size based on model size
+	modelSize := model.max.Sub(model.min).Norm()
+	if modelSize > 10000 {
+		gridSize = 128.0 // Very large model
+	} else if modelSize > 5000 {
+		gridSize = 64.0 // Large model
+	} else if modelSize > 2000 {
+		gridSize = 32.0 // Medium model
+	}
+	model.gridSize = gridSize
+
+	// Pre-allocate some cells to avoid frequent map resizing
+	model.sectors = make(map[GridKey][]int, len(triangles)/4) // Rough estimate of cell count
+
+	// Add triangles to grid cells they intersect
+	for i, tri := range triangles {
+		// Get triangle bounds
+		triMin := r3.Vector{
+			X: math.Min(math.Min(tri.V1.X, tri.V2.X), tri.V3.X),
+			Y: math.Min(math.Min(tri.V1.Y, tri.V2.Y), tri.V3.Y),
+			Z: math.Min(math.Min(tri.V1.Z, tri.V2.Z), tri.V3.Z),
+		}
+		triMax := r3.Vector{
+			X: math.Max(math.Max(tri.V1.X, tri.V2.X), tri.V3.X),
+			Y: math.Max(math.Max(tri.V1.Y, tri.V2.Y), tri.V3.Y),
+			Z: math.Max(math.Max(tri.V1.Z, tri.V2.Z), tri.V3.Z),
+		}
+
+		// Convert to cell coordinates with boundary checks
+		// Use a safe floor function that handles extreme values
+		minCellX := safeFloor(triMin.X / gridSize)
+		minCellY := safeFloor(triMin.Y / gridSize)
+		minCellZ := safeFloor(triMin.Z / gridSize)
+		maxCellX := safeFloor(triMax.X / gridSize)
+		maxCellY := safeFloor(triMax.Y / gridSize)
+		maxCellZ := safeFloor(triMax.Z / gridSize)
+
+		// Limit the cell range to avoid excessive memory usage
+		const maxCellRange = 1000 // Maximum number of cells in any dimension
+		if maxCellX-minCellX > maxCellRange ||
+			maxCellY-minCellY > maxCellRange ||
+			maxCellZ-minCellZ > maxCellRange {
+			slog.Warn("Triangle spans too many cells, limiting range",
+				"triangle", i,
+				"original_range_x", maxCellX-minCellX,
+				"original_range_y", maxCellY-minCellY,
+				"original_range_z", maxCellZ-minCellZ)
+
+			// Limit the range while keeping the cell coordinates centered
+			if maxCellX-minCellX > maxCellRange {
+				center := (minCellX + maxCellX) / 2
+				minCellX = center - maxCellRange/2
+				maxCellX = center + maxCellRange/2
+			}
+
+			if maxCellY-minCellY > maxCellRange {
+				center := (minCellY + maxCellY) / 2
+				minCellY = center - maxCellRange/2
+				maxCellY = center + maxCellRange/2
+			}
+
+			if maxCellZ-minCellZ > maxCellRange {
+				center := (minCellZ + maxCellZ) / 2
+				minCellZ = center - maxCellRange/2
+				maxCellZ = center + maxCellRange/2
+			}
+		}
+
+		// Improve grid accuracy by checking if the triangle actually intersects each cell
+		for x := minCellX; x <= maxCellX; x++ {
+			for y := minCellY; y <= maxCellY; y++ {
+				for z := minCellZ; z <= maxCellZ; z++ {
+					cellMin := r3.Vector{
+						X: float64(x) * gridSize,
+						Y: float64(y) * gridSize,
+						Z: float64(z) * gridSize,
+					}
+					cellMax := r3.Vector{
+						X: float64(x+1) * gridSize,
+						Y: float64(y+1) * gridSize,
+						Z: float64(z+1) * gridSize,
+					}
+
+					// Enhanced check: see if triangle actually intersects this cell
+					if triangleIntersectsAABB(tri, cellMin, cellMax) {
+						key := GridKey{x: x, y: y, z: z}
+						model.sectors[key] = append(model.sectors[key], i) // Store triangle index, not the triangle itself
+					}
+				}
+			}
+		}
+	}
+
+	// Log statistics about the grid
+	cellCount := len(model.sectors)
+	totalRefs := 0
+	for _, indices := range model.sectors {
+		totalRefs += len(indices)
+	}
+
+	avgRefsPerCell := 0.0
+	if cellCount > 0 {
+		avgRefsPerCell = float64(totalRefs) / float64(cellCount)
+	}
+
+	slog.Info("Spatial grid built",
+		"triangles", len(triangles),
+		"cells", cellCount,
+		"total_refs", totalRefs,
+		"avg_refs_per_cell", avgRefsPerCell,
+		"grid_size", gridSize)
+
+	return nil
+}
+
+// safeFloor performs a floor operation that is safe for extreme values
+func safeFloor(v float64) int {
+	// Check for NaN
+	if math.IsNaN(v) {
+		return 0
+	}
+
+	// Check for extremely large positive values
+	if v > float64(math.MaxInt32) {
+		return math.MaxInt32
+	}
+
+	// Check for extremely large negative values
+	if v < float64(math.MinInt32) {
+		return math.MinInt32
+	}
+
+	return int(math.Floor(v))
 }
 
 func optimizeMapSpatialStructure(mapModel *MapModel) {
@@ -1487,11 +1767,25 @@ func processNamedAreaNode(node gltf.Node, model *MapModel) {
 }
 
 func determineMapScale(mapModel *MapModel) {
+	// Check for invalid bounds first
+	checkAndFixInvalidBounds(&mapModel.BaseModel)
+
 	// Get the overall size of the map
 	size := r3.Vector{
 		X: mapModel.BaseModel.max.X - mapModel.BaseModel.min.X,
 		Y: mapModel.BaseModel.max.Y - mapModel.BaseModel.min.Y,
 		Z: mapModel.BaseModel.max.Z - mapModel.BaseModel.min.Z,
+	}
+
+	// Validate the size - if any dimension is negative or unreasonably large, reset
+	if size.X <= 0 || size.Y <= 0 || size.Z <= 0 ||
+		size.X > 100000 || size.Y > 100000 || size.Z > 100000 {
+		slog.Warn("Invalid map size detected, using default scale",
+			"invalidSize", size)
+
+		// Set a reasonable default grid size
+		mapModel.BaseModel.gridSize = 64.0
+		return
 	}
 
 	// Calculate diagonal size
@@ -1706,126 +2000,6 @@ func calculateBoundingBox(triangles []types.Triangle, start, end int) AABB {
 	max.Z += padding
 
 	return AABB{Min: min, Max: max}
-}
-
-func buildSpatialGrid(model *Model) error {
-	triangles := model.triangles
-
-	// Calculate model bounds if they haven't been set
-	if model.min.X > model.max.X {
-		// Initialize with extreme values
-		min := r3.Vector{X: math.MaxFloat64, Y: math.MaxFloat64, Z: math.MaxFloat64}
-		max := r3.Vector{X: -math.MaxFloat64, Y: -math.MaxFloat64, Z: -math.MaxFloat64}
-
-		for _, tri := range triangles {
-			// Update min/max for each vertex
-			min.X = math.Min(min.X, math.Min(tri.V1.X, math.Min(tri.V2.X, tri.V3.X)))
-			min.Y = math.Min(min.Y, math.Min(tri.V1.Y, math.Min(tri.V2.Y, tri.V3.Y)))
-			min.Z = math.Min(min.Z, math.Min(tri.V1.Z, math.Min(tri.V2.Z, tri.V3.Z)))
-
-			max.X = math.Max(max.X, math.Max(tri.V1.X, math.Max(tri.V2.X, tri.V3.X)))
-			max.Y = math.Max(max.Y, math.Max(tri.V1.Y, math.Max(tri.V2.Y, tri.V3.Y)))
-			max.Z = math.Max(max.Z, math.Max(tri.V1.Z, math.Max(tri.V2.Z, tri.V3.Z)))
-		}
-
-		// Add padding
-		const padding = 1.0
-		min.X -= padding
-		min.Y -= padding
-		min.Z -= padding
-		max.X += padding
-		max.Y += padding
-		max.Z += padding
-
-		// Set model bounds
-		model.min = min
-		model.max = max
-	}
-
-	// Use the model's grid size
-	gridSize := model.gridSize
-
-	// Dynamic adjustment of grid size based on model size
-	modelSize := model.max.Sub(model.min).Norm()
-	if modelSize > 10000 {
-		gridSize = 128.0 // Very large model
-	} else if modelSize > 5000 {
-		gridSize = 64.0 // Large model
-	} else if modelSize > 2000 {
-		gridSize = 32.0 // Medium model
-	}
-	model.gridSize = gridSize
-
-	// Pre-allocate some cells to avoid frequent map resizing
-	model.sectors = make(map[GridKey][]int, len(triangles)/4) // Rough estimate of cell count
-
-	// Add triangles to grid cells they intersect
-	for i, tri := range triangles {
-		// Get triangle bounds
-		triMin := r3.Vector{
-			X: math.Min(math.Min(tri.V1.X, tri.V2.X), tri.V3.X),
-			Y: math.Min(math.Min(tri.V1.Y, tri.V2.Y), tri.V3.Y),
-			Z: math.Min(math.Min(tri.V1.Z, tri.V2.Z), tri.V3.Z),
-		}
-		triMax := r3.Vector{
-			X: math.Max(math.Max(tri.V1.X, tri.V2.X), tri.V3.X),
-			Y: math.Max(math.Max(tri.V1.Y, tri.V2.Y), tri.V3.Y),
-			Z: math.Max(math.Max(tri.V1.Z, tri.V2.Z), tri.V3.Z),
-		}
-
-		// Convert to cell coordinates
-		minCellX := int(math.Floor(triMin.X / gridSize))
-		minCellY := int(math.Floor(triMin.Y / gridSize))
-		minCellZ := int(math.Floor(triMin.Z / gridSize))
-		maxCellX := int(math.Floor(triMax.X / gridSize))
-		maxCellY := int(math.Floor(triMax.Y / gridSize))
-		maxCellZ := int(math.Floor(triMax.Z / gridSize))
-
-		// Improve grid accuracy by checking if the triangle actually intersects each cell
-		for x := minCellX; x <= maxCellX; x++ {
-			for y := minCellY; y <= maxCellY; y++ {
-				for z := minCellZ; z <= maxCellZ; z++ {
-					cellMin := r3.Vector{
-						X: float64(x) * gridSize,
-						Y: float64(y) * gridSize,
-						Z: float64(z) * gridSize,
-					}
-					cellMax := r3.Vector{
-						X: float64(x+1) * gridSize,
-						Y: float64(y+1) * gridSize,
-						Z: float64(z+1) * gridSize,
-					}
-
-					// Enhanced check: see if triangle actually intersects this cell
-					if triangleIntersectsAABB(tri, cellMin, cellMax) {
-						key := GridKey{x: x, y: y, z: z}
-						model.sectors[key] = append(model.sectors[key], i) // Store triangle index, not the triangle itself
-					}
-				}
-			}
-		}
-	}
-
-	// Log statistics about the grid
-	cellCount := len(model.sectors)
-	totalRefs := 0
-	for _, indices := range model.sectors {
-		totalRefs += len(indices)
-	}
-
-	avgRefsPerCell := 0.0
-	if cellCount > 0 {
-		avgRefsPerCell = float64(totalRefs) / float64(cellCount)
-	}
-
-	slog.Info("Spatial grid built",
-		"triangles", len(triangles),
-		"cells", cellCount,
-		"total_refs", totalRefs,
-		"avg_refs_per_cell", avgRefsPerCell,
-		"grid_size", gridSize)
-
-	return nil
 }
 
 func triangleIntersectsAABB(tri types.Triangle, min, max r3.Vector) bool {

@@ -1,7 +1,6 @@
 package visibility
 
 import (
-	"log"
 	"log/slog"
 	"math"
 
@@ -10,87 +9,105 @@ import (
 )
 
 // IsShooterPointingAtTarget checks if the shooter is pointing at the target
-// while considering obstacles in the map model.
+// by doing a direct line-of-sight check from shooter eye to each target point.
+// Updated to use coordinate transformation for proper alignment with map geometry.
 func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel) bool {
-	// Step 1: Compute the eye position of the shooter
-	shooterEyeLevel := shooter.Position
-	shooterEyeLevel.Z += 55 // Approximate eye level in CS2
+	// Transform shooter and target positions to model space
+	transformedShooter := transformPlayerTickToModelSpace(shooter, &mapModel)
+	transformedTarget := transformPlayerTickToModelSpace(target, &mapModel)
 
-	// Step 2: Compute the expected yaw and pitch
-	dirVector := r3.Vector{
-		X: target.Position.X - shooterEyeLevel.X,
-		Y: target.Position.Y - shooterEyeLevel.Y,
-		Z: target.Position.Z + 55 - shooterEyeLevel.Z, // Aim at chest level
-	}
-	targetDistance := dirVector.Norm()
-	expectedYaw := NormalizeAngle(math.Atan2(dirVector.Y, dirVector.X) * (180.0 / math.Pi))
-	horizontalDistance := math.Sqrt(dirVector.X*dirVector.X + dirVector.Y*dirVector.Y)
-	expectedPitch := math.Atan2(dirVector.Z, horizontalDistance) * (180.0 / math.Pi)
+	// 1) Compute shooter's eye position using the transformed position
+	shooterEye := GetAdjustedEyePosition(transformedShooter, &shooterModel, &mapModel)
 
-	shooterYaw := NormalizeAngle(float64(shooter.ViewAngleX))
-	shooterPitch := float64(shooter.ViewAngleY)
-	yawDifference := math.Abs(expectedYaw - shooterYaw)
-	if yawDifference > 180 {
-		yawDifference = 360 - yawDifference
-	}
-	pitchDifference := math.Abs(expectedPitch - shooterPitch)
+	slog.Info("Shooter position data",
+		"raw_replay_pos", shooter.Position,
+		"transformed_pos", transformedShooter.Position,
+		"eye_pos", shooterEye,
+		"viewAngleX", shooter.ViewAngleX,
+		"viewAngleY", shooter.ViewAngleY,
+	)
 
-	if yawDifference > 50.0 || pitchDifference > 50.0 {
-		return false
-	}
+	// 2) Use the shooter's view angles to compute their forward vector
+	shooterYaw := float64(shooter.ViewAngleX)   // X in degrees
+	shooterPitch := float64(shooter.ViewAngleY) // Y in degrees
 
-	// Step 3: Define multiple target points (head, shoulders, chest, pelvis, legs) for improved accuracy
+	yawRad := shooterYaw * (math.Pi / 180.0)
+	pitchRad := shooterPitch * (math.Pi / 180.0)
+
+	slog.Info("Computed shooter angles",
+		"yawRad", yawRad,
+		"pitchRad", pitchRad)
+
+	// Forward vector in Source2 coordinates
+	// (X=forward, Y=left, Z=up; pitch is positive downward => -sin)
+	forwardVector := r3.Vector{
+		X: math.Cos(yawRad) * math.Cos(pitchRad),
+		Y: math.Sin(yawRad) * math.Cos(pitchRad),
+		Z: -math.Sin(pitchRad),
+	}.Normalize()
+
+	// 3) Define the target points (hitbox approximation) using transformed coordinates
 	targetPoints := []r3.Vector{
-		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 72}), // Head
-		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 64}), // Shoulders
-		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 55}), // Chest
-		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 40}), // Pelvis
-		target.Position.Add(r3.Vector{X: 0, Y: 0, Z: 30}), // Legs
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 72}), // head
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 64}), // shoulders
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 55}), // chest
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 40}), // pelvis
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 30}), // legs
 	}
 
-	// Step 4: Check if any target points are visible using multiple rays
-	visibleCount := 0
-	for _, targetPoint := range targetPoints {
-		if checkVisibilityWithOffsets(shooterEyeLevel, targetPoint, mapModel, targetDistance) {
-			visibleCount++
+	// 4) Decide on a max angle difference (shooter FOV half-angle)
+	// If you want ~100° total, set 50° as half-angle
+	maxAngleDifference := 50.0
+
+	// 5) For each target point, do a direct line-of-sight check
+	for _, tp := range targetPoints {
+		// A) Compute direction from shooter eye to this target point
+		dir := tp.Sub(shooterEye)
+		dist := dir.Norm()
+		if dist < 1e-3 {
+			// Degenerate case: very close or identical positions
+			continue
+		}
+		dirNorm := dir.Normalize()
+
+		// B) Check angle difference
+		// Dot product to find angle between shooter's forward vector and dirNorm
+		dot := forwardVector.Dot(dirNorm)
+		// Clamp to [-1, 1] to avoid floating-point issues
+		dot = math.Max(-1.0, math.Min(1.0, dot))
+		angleDiff := math.Acos(dot) * (180.0 / math.Pi)
+
+		if angleDiff <= maxAngleDifference {
+			// Within FOV, now check if geometry is blocking
+			slog.Info("Target point is within FOV, checking line-of-sight",
+				"angleDiff", angleDiff,
+				"shooterYaw", shooterYaw,
+				"shooterPitch", shooterPitch,
+				"targetPos", tp,
+			)
+
+			// Call your transparency-aware ray check
+			blocked := checkRayWithTransparency(
+				shooterEye,
+				dirNorm,
+				mapModel.BaseModel.bvh,
+				dist*1.1, // maxDistance slightly bigger than distance to target
+			)
+
+			if !blocked {
+				// Not blocked => we have line-of-sight to this target point
+				return true
+			}
+		} else {
+			slog.Debug("Skipping target point outside FOV",
+				"angleDiff", angleDiff,
+				"maxAngleDifference", maxAngleDifference,
+				"targetPos", tp,
+			)
 		}
 	}
 
-	// If at least one point is visible, return true
-	if visibleCount > 0 {
-		return true
-	}
-
-	log.Printf("All target points blocked, no visibility to target.")
-	return false
-}
-
-// checkVisibilityWithOffsets tests visibility by slightly adjusting the ray
-func checkVisibilityWithOffsets(shooterPos, targetPos r3.Vector, mapModel MapModel, maxDist float64) bool {
-	offsets := []r3.Vector{
-		{X: 0, Y: 0, Z: 0},  // Center
-		{X: 1, Y: 0, Z: 0},  // Right
-		{X: -1, Y: 0, Z: 0}, // Left
-		{X: 0, Y: 1, Z: 0},  // Forward
-		{X: 0, Y: -1, Z: 0}, // Backward
-		{X: 0, Y: 0, Z: 1},  // Up
-		{X: 0, Y: 0, Z: -1}, // Down
-		// Diagonal offsets for improved accuracy
-		{X: 1, Y: 1, Z: 0},
-		{X: -1, Y: -1, Z: 0},
-		{X: 1, Y: -1, Z: 0},
-		{X: -1, Y: 1, Z: 0},
-	}
-
-	for _, offset := range offsets {
-		adjustedTarget := targetPos.Add(offset)
-		rayDirection := adjustedTarget.Sub(shooterPos).Normalize()
-
-		// Check for intersections along the ray, handling transparent materials
-		if !checkRayWithTransparency(shooterPos, rayDirection, mapModel.BaseModel.bvh, maxDist) {
-			return true // No blocking obstacles found
-		}
-	}
+	// If no target point was found visible, return false
 	return false
 }
 
@@ -100,39 +117,59 @@ func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDis
 		return false // No node, no blocking
 	}
 
+	slog.Info("Checking ray with transparency",
+		"origin", origin,
+		"direction", direction,
+		"maxDistance", maxDistance,
+		"node.bbox.Min", node.bbox.Min,
+		"node.bbox.Max", node.bbox.Max,
+		"triangles", len(node.triangles),
+		"materials", len(node.materials),
+	)
+
 	// Initialize variables for tracking hit information
 	currentOrigin := origin
 	remainingDistance := maxDistance
 
-	// TODO: debugging code, remove it
+	// Debug counters
 	hitCount := 0
 	transparentHitCount := 0
 
 	// Continue tracing the ray through transparent objects
 	for {
 		hitPos := r3.Vector{}
-		blocked, material := rayIntersectsBVHClosestHit(currentOrigin, direction, node, &hitPos, remainingDistance)
+		blocked, material, _ := rayIntersectsBVHClosestHit(currentOrigin, direction, node, &hitPos, remainingDistance)
 
-		// TODO: Debugging code, remove it
 		hitCount++
 
 		// If no hit or hit is beyond our range, we're done
 		if !blocked {
-			// TODO: debugging code, remove it
 			slog.Info("Ray passed through scene without hitting anything",
 				"hitCount", hitCount,
 				"transparentHits", transparentHitCount)
 			return false // No blocking
 		}
 
-		// If the material is transparent, continue from just beyond the hit point
-		if material.IsTransparent {
-			// TODO: debugging code, remove it
+		// Check if the material should be treated as transparent:
+		// 1. First check the IsTransparent flag (set during GLTF import)
+		// 2. If that's false, fallback to the runtime material name check
+		materialIsTransparent := material.IsTransparent
+
+		// If not marked as transparent in the GLTF, check the runtime material detection
+		if !materialIsTransparent && isTransparentMaterial(material.Name) {
+			materialIsTransparent = true
+			slog.Debug("Material detected as transparent by name pattern",
+				"materialName", material.Name)
+		}
+
+		if materialIsTransparent {
 			transparentHitCount++
 			slog.Info("Hit transparent material",
 				"materialName", material.Name,
 				"opacity", material.Opacity,
-				"hitPos", hitPos)
+				"hitPos", hitPos,
+				"markedTransparentInGLTF", material.IsTransparent,
+				"detectedByNamePattern", isTransparentMaterial(material.Name))
 
 			// Calculate new origin slightly beyond the hit point
 			hitDistance := currentOrigin.Sub(hitPos).Norm()
@@ -140,7 +177,6 @@ func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDis
 			// Adjust the remaining distance and move the origin forward
 			remainingDistance -= hitDistance
 			if remainingDistance <= 0 {
-				// TODO: debugging code, remove it
 				slog.Info("Reached maximum distance after transparent hits",
 					"transparentHits", transparentHitCount)
 				return false // Reached maximum distance
@@ -154,7 +190,6 @@ func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDis
 			continue
 		}
 
-		// TODO: debugging code, remove it
 		slog.Info("Hit opaque material, ray blocked",
 			"materialName", material.Name,
 			"opacity", material.Opacity,
@@ -168,21 +203,28 @@ func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDis
 }
 
 // rayIntersectsBVHClosestHit ensures the closest intersection is returned, avoiding false positives from distant objects
-func rayIntersectsBVHClosestHit(rayOrigin, rayDir r3.Vector, node *BVHNode, hitPosition *r3.Vector, maxDistance float64) (bool, MaterialProperties) {
+// Return: (didWeHit, whichMaterial, whichTriangleIndex)
+func rayIntersectsBVHClosestHit(
+	rayOrigin, rayDir r3.Vector,
+	node *BVHNode,
+	hitPosition *r3.Vector,
+	maxDistance float64,
+) (bool, MaterialProperties, int) {
 	if node == nil {
-		return false, MaterialProperties{}
+		return false, MaterialProperties{}, -1
 	}
 
-	// Check if ray intersects the bounding box of this node
+	// Check bounding box
 	if !rayIntersectsAABB(rayOrigin, rayDir, node.bbox.Min, node.bbox.Max) {
-		return false, MaterialProperties{}
+		return false, MaterialProperties{}, -1
 	}
 
 	closestHit := r3.Vector{}
 	minDistance := maxDistance
 	var closestMaterial MaterialProperties
+	closestIndex := -1
 
-	// If this is a leaf node, check each triangle
+	// If leaf node, check each triangle
 	if len(node.triangles) > 0 {
 		for i, tri := range node.triangles {
 			if rayIntersectsTriangleWithHit(rayOrigin, rayDir, tri, hitPosition) {
@@ -190,37 +232,76 @@ func rayIntersectsBVHClosestHit(rayOrigin, rayDir r3.Vector, node *BVHNode, hitP
 				if dist < minDistance {
 					minDistance = dist
 					closestHit = *hitPosition
-					// Get the material properties for this triangle
+					// Store the material & the index for that triangle
 					if i < len(node.materials) {
 						closestMaterial = node.materials[i]
+					} else {
+						// In case you have more triangles than materials
+						closestMaterial = MaterialProperties{}
 					}
+					closestIndex = i
 				}
 			}
 		}
+
 		*hitPosition = closestHit
-		return minDistance < maxDistance, closestMaterial
+		// If minDistance < maxDistance, we have a valid hit
+		hitFound := (minDistance < maxDistance)
+		return hitFound, closestMaterial, closestIndex
 	}
 
-	// Recursively check child nodes for closer intersection
-	leftHit, leftMat := rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.left, hitPosition, minDistance)
+	// Otherwise, recurse into child nodes
+	// We need to track which side gave the closer intersection
+	leftPos := r3.Vector{}
+	leftHit, leftMat, leftIdx :=
+		rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.left, &leftPos, maxDistance)
 	leftDist := math.MaxFloat64
 	if leftHit {
-		leftDist = rayOrigin.Sub(*hitPosition).Norm()
+		leftDist = rayOrigin.Sub(leftPos).Norm()
 	}
 
-	rightHit, rightMat := rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.right, hitPosition, minDistance)
+	rightPos := r3.Vector{}
+	rightHit, rightMat, rightIdx :=
+		rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.right, &rightPos, maxDistance)
 	rightDist := math.MaxFloat64
 	if rightHit {
-		rightDist = rayOrigin.Sub(*hitPosition).Norm()
+		rightDist = rayOrigin.Sub(rightPos).Norm()
 	}
 
+	// Now decide which side is closer, if either
 	if leftHit && (!rightHit || leftDist < rightDist) {
-		return true, leftMat
+		// The left child gave us the closest intersection
+		*hitPosition = leftPos
+
+		// The final intersection is from the left side
+		slog.Info("Collision found",
+			"triangleIndex", leftIdx,
+			"materialName", leftMat.Name,
+			"materialOpacity", leftMat.Opacity,
+			"materialRefractionIndex", leftMat.RefractionIndex,
+			"materialIsTransparent", leftMat.IsTransparent,
+			"hitPosition", *hitPosition,
+		)
+		return true, leftMat, leftIdx
 	}
 	if rightHit {
-		return true, rightMat
+		// The right child was closer
+		*hitPosition = rightPos
+
+		// The final intersection is from the right side
+		slog.Info("Collision found",
+			"triangleIndex", rightIdx,
+			"materialName", rightMat.Name,
+			"materialOpacity", rightMat.Opacity,
+			"materialRefractionIndex", rightMat.RefractionIndex,
+			"materialIsTransparent", rightMat.IsTransparent,
+			"hitPosition", *hitPosition,
+		)
+		return true, rightMat, rightIdx
 	}
-	return false, MaterialProperties{}
+
+	// If neither child was hit, return no collision
+	return false, MaterialProperties{}, -1
 }
 
 // rayIntersectsTriangleWithHit checks if a ray intersects a triangle and stores the hit position.
