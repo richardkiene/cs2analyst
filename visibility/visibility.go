@@ -886,7 +886,7 @@ func getCandidateWorldPoint(shooter, target types.PlayerTickData, modelPoint r3.
 }
 
 // CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye.
-func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *Model, tick int) (bool, []r3.Vector, *VisibilityDebugInfo) {
+func CanSeeTarget(shooter, target types.PlayerTickData, playerModel *Model, mapModel *MapModel, tick int) (bool, []r3.Vector, *VisibilityDebugInfo) {
 	var hitPoints []r3.Vector
 	debugEnabled := (shooter.SteamID == 76561199139199601)
 	debugInfo := &VisibilityDebugInfo{
@@ -972,7 +972,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 		tolerance := math.Max(distToCandidate*baseTolerance, minTolerance)
 
 		// NEW: Use partial geometry approach
-		geometry := mapModel.GetRelevantMapGeometry(eyePos, wp)
+		geometry := mapModel.BaseModel.GetRelevantMapGeometry(eyePos, wp)
 		var hitFound bool
 		var hitT float64
 
@@ -980,7 +980,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel, mapModel *M
 		closest := math.MaxFloat64
 		for _, tri := range geometry {
 			// Intersect the ray with 'tri'
-			if t, ok := RayIntersectsTriangle(eyePos, rayDir, mapModel.triangles[tri]); ok && t < closest {
+			if t, ok := RayIntersectsTriangle(eyePos, rayDir, mapModel.BaseModel.triangles[tri]); ok && t < closest {
 				closest = t
 				hitFound = true
 			}

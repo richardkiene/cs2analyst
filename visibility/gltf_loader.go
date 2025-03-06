@@ -618,7 +618,7 @@ func transformTriangleToSource2(tri types.Triangle) types.Triangle {
 }
 
 // transformVertexToSource2 converts a vertex from standard GLTF coordinates to Source2 coordinates
-func transformVertexToSource2(v r3.Vector) r3.Vector {
+/*func transformVertexToSource2(v r3.Vector) r3.Vector {
 	// GLTF -> Source2 transformation:
 	// Source2.X = GLTF.Z (GLTF Z forward becomes Source2 X forward/East)
 	// Source2.Y = -GLTF.X (GLTF X right becomes Source2 Y left/North, so negate)
@@ -627,6 +627,17 @@ func transformVertexToSource2(v r3.Vector) r3.Vector {
 		X: v.Z,  // Forward/East in Source2 is Z in GLTF
 		Y: -v.X, // Left/North in Source2 is negative X in GLTF
 		Z: v.Y,  // Up in Source2 is Y in GLTF
+	}
+}*/
+
+// TODO: Testing if this is the correct transform
+// UPDATE: So far this fixed the map layout transform mirroring issue
+func transformVertexToSource2(v r3.Vector) r3.Vector {
+	// Modified transformation to preserve expected left/right orientation
+	return r3.Vector{
+		X: v.Z, // Forward/East in Source2 is Z in GLTF
+		Y: v.X, // Changed from -v.X to v.X to fix left/right reversal
+		Z: v.Y, // Up in Source2 is Y in GLTF
 	}
 }
 

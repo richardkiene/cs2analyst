@@ -35,3 +35,6 @@ training_metrics.json
 
 # ignore gltf models
 input_models/
+
+# ignore output obj models
+visibility/export/

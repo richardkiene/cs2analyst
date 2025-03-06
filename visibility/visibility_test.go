@@ -272,7 +272,7 @@ func TestRotationConsistency(t *testing.T) {
 func TestCanSeeTargetCoordinateSystem(t *testing.T) {
 	// Create test models
 	playerModel := CreateTestPlayerModel()
-	mapModel := createTestMapModel()
+	mapModel := createVisTestMapModel()
 
 	tests := []struct {
 		name    string
@@ -372,9 +372,9 @@ func TestGetEyePositionHeight(t *testing.T) {
 // matches the horizontal component of the shooter’s ForwardVector() when there is zero pitch.
 func TestEyeDirectionConsistency(t *testing.T) {
 	// Create a model where the eye height is perfectly above the feet
-	model := createTestMapModel()
-	model.min = r3.Vector{X: -16, Y: -16, Z: 0}
-	model.max = r3.Vector{X: 16, Y: 16, Z: 72}
+	model := createVisTestMapModel()
+	model.BaseModel.min = r3.Vector{X: -16, Y: -16, Z: 0}
+	model.BaseModel.max = r3.Vector{X: 16, Y: 16, Z: 72}
 
 	// Create a shooter at the origin with no pitch (level view) and facing east
 	shooter := types.PlayerTickData{
@@ -384,7 +384,7 @@ func TestEyeDirectionConsistency(t *testing.T) {
 		IsAlive:    true,
 	}
 
-	eyePos := GetEyePosition(shooter, model)
+	eyePos := GetEyePosition(shooter, &model.BaseModel)
 
 	// Since GetEyePosition only adds Z height and doesn't affect X/Y,
 	// the horizontal components of the eye offset should be zero
@@ -437,10 +437,10 @@ func CreateTestPlayerModel() *Model {
 	return model
 }
 
-func createTestMapModel() *Model {
-	model := NewModel()
+func createVisTestMapModel() *MapModel {
+	model := NewMapModel()
 	// Add some basic geometry for testing
-	model.triangles = []types.Triangle{
+	model.BaseModel.triangles = []types.Triangle{
 		// Ground plane
 		{
 			V1: r3.Vector{X: -1000, Y: -1000, Z: 0},
