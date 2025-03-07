@@ -120,18 +120,14 @@ func (sc *Source2Coordinates) ApplyCS2Rotation(viewAngleX, viewAngleY float32, d
 	yawRad := float64(viewAngleX) * math.Pi / 180.0
 	pitchRad := float64(viewAngleY) * math.Pi / 180.0
 
-	// In Source2: X=forward/East, Y=left/North, Z=up
-	// Yaw rotates around Z axis (0=north, 90=east, 180=south, 270=west)
-	// Pitch rotates around Y axis after yaw (0=horizontal, positive=down, negative=up)
-
-	// Compute the forward vector in Source2 coordinates
+	// Calculate forward vector using same logic as player.ForwardVector
 	forward := r3.Vector{
 		X: math.Sin(yawRad) * math.Cos(pitchRad),
 		Y: math.Cos(yawRad) * math.Cos(pitchRad),
-		Z: -math.Sin(pitchRad), // Negative because pitch is positive downward
+		Z: -math.Sin(pitchRad),
 	}
 
-	// Transform to model space
+	// Apply coordinate transformation
 	return sc.CS2ToModelSpace(forward)
 }
 
@@ -147,6 +143,9 @@ func transformPlayerTickToModelSpace(player types.PlayerTickData, mapModel *MapM
 	// Transform the position using our coordinate transformer
 	transformedPlayer.Position = coords.CS2ToModelSpace(player.Position)
 
+	// No need to transform view angles as we're handling them separately
+	// in IsShooterPointingAtTarget
+
 	return transformedPlayer
 }
 
@@ -158,18 +157,12 @@ func GetAdjustedEyePosition(shooter types.PlayerTickData, playerModel *Model, ma
 		eyeHeight = 46.0 // Crouching height
 	}
 
-	// Create a coordinate transformer
-	coords := NewDefaultSource2Coordinates()
-
-	// Calculate the eye position in Source2 coordinates first
-	eyePosSource2 := r3.Vector{
+	// Return vector with eye height added
+	return r3.Vector{
 		X: shooter.Position.X,
 		Y: shooter.Position.Y,
 		Z: shooter.Position.Z + eyeHeight,
 	}
-
-	// Transform the complete eye position to model space
-	return coords.CS2ToModelSpace(eyePosSource2)
 }
 
 // DebugCoordinateTransformation provides a detailed analysis of the coordinate transformation

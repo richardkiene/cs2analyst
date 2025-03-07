@@ -12,105 +12,50 @@ import (
 // by doing a direct line-of-sight check from shooter eye to each target point.
 // Updated to use coordinate transformation for proper alignment with map geometry.
 func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel) bool {
+	// 1. Skip the FOV check for ray casting - this differs from CS2's own FOV check logic
+	//    CS2 likely does additional processing beyond a simple dot product
+
+	// Calculate eye position in CS2 coordinates
+	eyeHeight := 64.0
+	if shooter.IsCrouched {
+		eyeHeight = 46.0
+	}
+
+	eyePos := r3.Vector{
+		X: shooter.Position.X,
+		Y: shooter.Position.Y,
+		Z: shooter.Position.Z + eyeHeight,
+	}
+
+	// 2. Transform to model space for ray casting
 	coords := NewDefaultSource2Coordinates()
+	transformedEyePos := coords.CS2ToModelSpace(eyePos)
+	transformedTargetPos := coords.CS2ToModelSpace(target.Position)
 
-	// 1) Transform both player's positions to model space
-	transformedShooter := transformPlayerTickToModelSpace(shooter, &mapModel)
-	transformedTarget := transformPlayerTickToModelSpace(target, &mapModel)
+	// 3. Direction and distance in model space
+	modelDirToTarget := transformedTargetPos.Sub(transformedEyePos).Normalize()
+	distance := transformedEyePos.Sub(transformedTargetPos).Norm()
 
-	// 2) Compute shooter's eye position using the transformed position
-	shooterEye := GetAdjustedEyePosition(transformedShooter, &shooterModel, &mapModel)
-
-	slog.Info("Shooter position data",
-		"raw_replay_pos", shooter.Position,
-		"transformed_pos", transformedShooter.Position,
-		"eye_pos", shooterEye,
+	slog.Info("Ray casting in model space",
+		"shooter_position", shooter.Position,
+		"target_position", target.Position,
 		"viewAngleX", shooter.ViewAngleX,
 		"viewAngleY", shooter.ViewAngleY,
+		"transformedEyePos", transformedEyePos,
+		"transformedTargetPos", transformedTargetPos,
+		"modelDirToTarget", modelDirToTarget,
+		"distance", distance)
+
+	// 4. Check for obstructions using ray casting
+	blocked := checkRayWithTransparency(
+		transformedEyePos,
+		modelDirToTarget,
+		mapModel.BaseModel.bvh,
+		distance*1.1, // Add 10% for safety
 	)
 
-	// 3) Use the shooter's view angles to compute their forward vector
-	shooterYaw := float64(shooter.ViewAngleX)   // X in degrees
-	shooterPitch := float64(shooter.ViewAngleY) // Y in degrees
-
-	yawRad := shooterYaw * (math.Pi / 180.0)
-	pitchRad := shooterPitch * (math.Pi / 180.0)
-
-	slog.Info("Computed shooter angles",
-		"yawRad", yawRad,
-		"pitchRad", pitchRad)
-
-	// Forward vector in Source2 coordinates
-	forwardVector := coords.ApplyCS2Rotation(shooter.ViewAngleX, shooter.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
-
-	// 4) Define the target points (hitbox approximation) using transformed coordinates
-	// The height values are in Source2 units, so scale them to model space
-	scaleHeight := func(height float64) float64 {
-		return height * coords.UnitScale
-	}
-
-	targetPoints := []r3.Vector{
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(72)}), // head
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(64)}), // shoulders
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(55)}), // chest
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(40)}), // pelvis
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(30)}), // legs
-	}
-
-	// 5) Decide on a max angle difference (shooter FOV half-angle)
-	// If you want ~100° total, set 50° as half-angle
-	maxAngleDifference := 50.0
-
-	// 6) For each target point, do a direct line-of-sight check
-	for _, tp := range targetPoints {
-		// A) Compute direction from shooter eye to this target point
-		dir := tp.Sub(shooterEye)
-		dist := dir.Norm()
-		if dist < 1e-3 {
-			// Degenerate case: very close or identical positions
-			continue
-		}
-		dirNorm := dir.Normalize()
-
-		// B) Check angle difference
-		// Dot product to find angle between shooter's forward vector and dirNorm
-		dot := forwardVector.Dot(dirNorm)
-		// Clamp to [-1, 1] to avoid floating-point issues
-		dot = math.Max(-1.0, math.Min(1.0, dot))
-		angleDiff := math.Acos(dot) * (180.0 / math.Pi)
-
-		if angleDiff <= maxAngleDifference {
-			// Within FOV, now check if geometry is blocking
-			slog.Info("Target point is within FOV, checking line-of-sight",
-				"angleDiff", angleDiff,
-				"shooterYaw", shooterYaw,
-				"shooterPitch", shooterPitch,
-				"targetPos", tp,
-			)
-
-			// Call your transparency-aware ray check
-			blocked := checkRayWithTransparency(
-				shooterEye,
-				dirNorm,
-				mapModel.BaseModel.bvh,
-				dist*1.1, // maxDistance slightly bigger than distance to target
-			)
-
-			if !blocked {
-				// Not blocked => we have line-of-sight to this target point
-				return true
-			}
-		} else {
-			slog.Debug("Skipping target point outside FOV",
-				"angleDiff", angleDiff,
-				"maxAngleDifference", maxAngleDifference,
-				"targetPos", tp,
-			)
-		}
-	}
-
-	// If no target point was found visible, return false
-	return false
+	// 5. Return true if there's no obstruction
+	return !blocked
 }
 
 // checkRayWithTransparency checks if a ray is blocked by non-transparent objects
