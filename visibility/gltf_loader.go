@@ -224,8 +224,7 @@ func extractMaterials(doc *gltf.Document) []MaterialProperties {
 		}
 
 		// Manually mark specific known materials as transparent
-		if contains(material.Name, "residwall04a") || // Mirage specific
-			contains(material.Name, "urban_fence") ||
+		if contains(material.Name, "urban_fence") ||
 			contains(material.Name, "chainlink_fence") ||
 			contains(material.Name, "wire_mesh") {
 			matProps.IsTransparent = true
@@ -265,7 +264,6 @@ func isTransparentMaterial(materialName string) bool {
 
 	// Mirage-specific materials that are known to be transparent
 	knownTransparentMaterials := map[string]bool{
-		"residwall04a":    true, // Known semi-transparent wall
 		"urban_fence_001": true, // Fence material
 		"chainlink_fence": true, // Chain link fence
 		"wire_mesh_fence": true, // Wire mesh fence
@@ -617,26 +615,14 @@ func transformTriangleToSource2(tri types.Triangle) types.Triangle {
 	return types.Triangle{V1: v1, V2: v2, V3: v3}
 }
 
-// transformVertexToSource2 converts a vertex from standard GLTF coordinates to Source2 coordinates
-/*func transformVertexToSource2(v r3.Vector) r3.Vector {
-	// GLTF -> Source2 transformation:
-	// Source2.X = GLTF.Z (GLTF Z forward becomes Source2 X forward/East)
-	// Source2.Y = -GLTF.X (GLTF X right becomes Source2 Y left/North, so negate)
-	// Source2.Z = GLTF.Y (GLTF Y up becomes Source2 Z up)
-	return r3.Vector{
-		X: v.Z,  // Forward/East in Source2 is Z in GLTF
-		Y: -v.X, // Left/North in Source2 is negative X in GLTF
-		Z: v.Y,  // Up in Source2 is Y in GLTF
-	}
-}*/
-
-// TODO: Testing if this is the correct transform
-// UPDATE: So far this fixed the map layout transform mirroring issue
 func transformVertexToSource2(v r3.Vector) r3.Vector {
-	// Modified transformation to preserve expected left/right orientation
+	// Corrected transformation from GLTF to Source2:
+	// Source2 X (forward/East) is GLTF Z
+	// Source2 Y (left/North) is GLTF X
+	// Source2 Z (up) is GLTF Y
 	return r3.Vector{
 		X: v.Z, // Forward/East in Source2 is Z in GLTF
-		Y: v.X, // Changed from -v.X to v.X to fix left/right reversal
+		Y: v.X, // Left/North in Source2 is X in GLTF
 		Z: v.Y, // Up in Source2 is Y in GLTF
 	}
 }

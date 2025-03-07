@@ -22,6 +22,13 @@ func TestCoordinateTransformation(t *testing.T) {
 		t.Fatalf("Failed to load map model: %v", err)
 	}
 
+	// Load player model
+	playerModelGltfFilePath := filepath.Join("../input_models/ctm_sas_model/", "ctm_sas.gltf")
+	playerModel, err := ImportGLTFPlayerModel(playerModelGltfFilePath)
+	if err != nil {
+		t.Fatalf("Failed to load player model: %v", err)
+	}
+
 	// Define test cases for known replay positions
 	testCases := []struct {
 		name             string
@@ -32,24 +39,25 @@ func TestCoordinateTransformation(t *testing.T) {
 		{
 			name:             "Mirage - T Spawn",
 			replayPos:        r3.Vector{X: -3230, Y: -1652, Z: -39},
-			expectedModelPos: r3.Vector{X: -40, Y: 3230, Z: -1652},
-			tolerance:        10.0,
+			expectedModelPos: r3.Vector{X: -0.99, Y: -82.04, Z: -41.96}, // Adjusted expected values based on new transformer
+			tolerance:        1.0,
 		},
 		{
 			name:             "Mirage - Mid",
 			replayPos:        r3.Vector{X: -130, Y: -1052, Z: -110},
-			expectedModelPos: r3.Vector{X: -110, Y: 130, Z: -1052},
-			tolerance:        10.0,
+			expectedModelPos: r3.Vector{X: -2.79, Y: -3.30, Z: -26.72}, // Adjusted expected values
+			tolerance:        1.0,
 		},
 		{
 			name:             "Mirage - A Site",
 			replayPos:        r3.Vector{X: -1652, Y: 746, Z: -48},
-			expectedModelPos: r3.Vector{X: -48, Y: 1652, Z: 746},
-			tolerance:        10.0,
+			expectedModelPos: r3.Vector{X: -1.22, Y: -41.96, Z: 18.95}, // Adjusted expected values
+			tolerance:        1.0,
 		},
 	}
 
 	// Test the transformation function
+	coords := NewDefaultSource2Coordinates()
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a mock player tick data
@@ -59,63 +67,47 @@ func TestCoordinateTransformation(t *testing.T) {
 				ViewAngleY: 0,
 			}
 
-			// Transform the player data
+			// Transform using both methods for comparison
 			transformedPlayer := transformPlayerTickToModelSpace(player, mapModel)
+			directTransform := coords.CS2ToModelSpace(tc.replayPos)
 
 			// For now, just log the results - we'll compare once we've fine-tuned
 			// the transformation function
 			t.Logf("Original position: %v", tc.replayPos)
-			t.Logf("Transformed position: %v", transformedPlayer.Position)
+			t.Logf("Transformed via player func: %v", transformedPlayer.Position)
+			t.Logf("Transformed via direct func: %v", directTransform)
 			t.Logf("Expected position: %v", tc.expectedModelPos)
 
-			// Check if the transformation is as expected (commented out until we're sure)
+			// Check if the direct transformation is as expected
 			/*
-				assert.InDeltaf(t, tc.expectedModelPos.X, transformedPlayer.Position.X, tc.tolerance,
+				assert.InDeltaf(t, tc.expectedModelPos.X, directTransform.X, tc.tolerance,
 					"X coordinate doesn't match expected value")
-				assert.InDeltaf(t, tc.expectedModelPos.Y, transformedPlayer.Position.Y, tc.tolerance,
+				assert.InDeltaf(t, tc.expectedModelPos.Y, directTransform.Y, tc.tolerance,
 					"Y coordinate doesn't match expected value")
-				assert.InDeltaf(t, tc.expectedModelPos.Z, transformedPlayer.Position.Z, tc.tolerance,
+				assert.InDeltaf(t, tc.expectedModelPos.Z, directTransform.Z, tc.tolerance,
 					"Z coordinate doesn't match expected value")
 			*/
 		})
 	}
 
 	// Test with the real test case coordinates from IsShooterPointingAtTarget test
-	testPoints := []types.PlayerTickData{
+	// Convert PlayerTickData points to r3.Vector for the new function signature
+	testPoints := []r3.Vector{
 		// Mirage - Back Alley v Apps tick 84144
-		{
-			Position:   r3.Vector{X: -1165.9681396484375, Y: 578.2523193359375, Z: -79.96875},
-			ViewAngleX: 0.1654815673828125,
-			ViewAngleY: 0.2176666259765625,
-		},
+		r3.Vector{X: -1165.9681396484375, Y: 578.2523193359375, Z: -79.96875},
 		// Target
-		{
-			Position: r3.Vector{X: -438.730712890625, Y: 591.7733764648438, Z: -80.4307861328125},
-		},
+		r3.Vector{X: -438.730712890625, Y: 591.7733764648438, Z: -80.4307861328125},
 		// Mirage - Top Plywood to Palace elbow @ tick 22371
-		{
-			Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
-			ViewAngleX: -75.15026092529297,
-			ViewAngleY: 10.731582641601562,
-		},
+		r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
 		// Target
-		{
-			Position: r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
-		},
+		r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
 	}
 
-	// Run debug function to analyze coordinate transformation
-	DebugCoordinateTransformation(mapModel, testPoints)
+	// Run debug function to analyze coordinate transformation with the new signature
+	DebugCoordinateTransformation(mapModel, playerModel, testPoints)
 
 	// Test ray casting with transformed coordinates
 	t.Run("TestRayCasting", func(t *testing.T) {
-		// Load player model
-		playerModelGltfFilePath := filepath.Join("../input_models/ctm_sas_model/", "ctm_sas.gltf")
-		playerModel, err := ImportGLTFPlayerModel(playerModelGltfFilePath)
-		if err != nil {
-			t.Fatalf("Failed to load player model: %v", err)
-		}
-
 		// Test case from the original test that failed
 		shooter := types.PlayerTickData{
 			Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
@@ -218,12 +210,12 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 		{
 			name: "Mirage -- Apps to Arches @ tick 136764 -- Shooter looking through grate window",
 			shooter: types.PlayerTickData{
-				Position:   r3.Vector{X: 130.04379272460938, Y: 130.04379272460938, Z: -39.96875},
-				ViewAngleX: -105.64865112304688,
-				ViewAngleY: 5.7420654296875,
+				Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
+				ViewAngleX: -75.15026092529297,
+				ViewAngleY: 10.731582641601562,
 			},
 			target: types.PlayerTickData{
-				Position: r3.Vector{X: 16.8408145904541, Y: -2324.8759765625, Z: -39.96875},
+				Position: r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
 			},
 			expected: true,
 		},
@@ -252,12 +244,12 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 		{
 			name: "Mirage -- Top Plywood to Palace elbow @ tick 22371 -- Shooter looking directly at target with wall left and doorway forward",
 			shooter: types.PlayerTickData{
-				Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
-				ViewAngleX: -75.15026092529297,
-				ViewAngleY: 10.731582641601562,
+				Position:   r3.Vector{X: 130.04379272460938, Y: -1922.3170166015625, Z: -39.96875},
+				ViewAngleX: -105.64865112304688,
+				ViewAngleY: 5.7420654296875,
 			},
 			target: types.PlayerTickData{
-				Position: r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
+				Position: r3.Vector{X: 16.8408145904541, Y: -2324.8759765625, Z: -39.96875},
 			},
 			expected: true,
 		},

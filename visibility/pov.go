@@ -12,11 +12,13 @@ import (
 // by doing a direct line-of-sight check from shooter eye to each target point.
 // Updated to use coordinate transformation for proper alignment with map geometry.
 func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel) bool {
-	// Transform shooter and target positions to model space
+	coords := NewDefaultSource2Coordinates()
+
+	// 1) Transform both player's positions to model space
 	transformedShooter := transformPlayerTickToModelSpace(shooter, &mapModel)
 	transformedTarget := transformPlayerTickToModelSpace(target, &mapModel)
 
-	// 1) Compute shooter's eye position using the transformed position
+	// 2) Compute shooter's eye position using the transformed position
 	shooterEye := GetAdjustedEyePosition(transformedShooter, &shooterModel, &mapModel)
 
 	slog.Info("Shooter position data",
@@ -27,7 +29,7 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 		"viewAngleY", shooter.ViewAngleY,
 	)
 
-	// 2) Use the shooter's view angles to compute their forward vector
+	// 3) Use the shooter's view angles to compute their forward vector
 	shooterYaw := float64(shooter.ViewAngleX)   // X in degrees
 	shooterPitch := float64(shooter.ViewAngleY) // Y in degrees
 
@@ -39,27 +41,27 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 		"pitchRad", pitchRad)
 
 	// Forward vector in Source2 coordinates
-	// (X=forward, Y=left, Z=up; pitch is positive downward => -sin)
-	forwardVector := r3.Vector{
-		X: math.Cos(yawRad) * math.Cos(pitchRad),
-		Y: math.Sin(yawRad) * math.Cos(pitchRad),
-		Z: -math.Sin(pitchRad),
-	}.Normalize()
+	forwardVector := coords.ApplyCS2Rotation(shooter.ViewAngleX, shooter.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
 
-	// 3) Define the target points (hitbox approximation) using transformed coordinates
-	targetPoints := []r3.Vector{
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 72}), // head
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 64}), // shoulders
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 55}), // chest
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 40}), // pelvis
-		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: 30}), // legs
+	// 4) Define the target points (hitbox approximation) using transformed coordinates
+	// The height values are in Source2 units, so scale them to model space
+	scaleHeight := func(height float64) float64 {
+		return height * coords.UnitScale
 	}
 
-	// 4) Decide on a max angle difference (shooter FOV half-angle)
+	targetPoints := []r3.Vector{
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(72)}), // head
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(64)}), // shoulders
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(55)}), // chest
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(40)}), // pelvis
+		transformedTarget.Position.Add(r3.Vector{X: 0, Y: 0, Z: scaleHeight(30)}), // legs
+	}
+
+	// 5) Decide on a max angle difference (shooter FOV half-angle)
 	// If you want ~100° total, set 50° as half-angle
 	maxAngleDifference := 50.0
 
-	// 5) For each target point, do a direct line-of-sight check
+	// 6) For each target point, do a direct line-of-sight check
 	for _, tp := range targetPoints {
 		// A) Compute direction from shooter eye to this target point
 		dir := tp.Sub(shooterEye)
@@ -183,7 +185,7 @@ func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDis
 			}
 
 			// Move slightly beyond the hit point to avoid self-intersection
-			const epsilon = 0.01
+			const epsilon = 0.001
 			currentOrigin = hitPos.Add(direction.Mul(epsilon))
 
 			// Continue the loop to check for the next hit

@@ -17,15 +17,17 @@ type GridKey struct {
 }
 
 type Visibility struct {
-	objDirPath string
-	LosSystem  LineOfSightSystem
-	logger     slog.Logger
+	objDirPath       string
+	LosSystem        LineOfSightSystem
+	logger           slog.Logger
+	coordTransformer *Source2Coordinates
 }
 
 func New(objDirPath string) *Visibility {
 	return &Visibility{
-		objDirPath: objDirPath,
-		logger:     *slog.Default(),
+		objDirPath:       objDirPath,
+		logger:           *slog.Default(),
+		coordTransformer: NewDefaultSource2Coordinates(),
 	}
 }
 
@@ -588,159 +590,12 @@ func transformReplayToModelSpace(replayPos r3.Vector, mapModel *MapModel) r3.Vec
 	return transformedPos
 }
 
-// transformPlayerTickToModelSpace transforms a PlayerTickData to match the coordinate
-// system used by the map model (after GLTF transformation).
-func transformPlayerTickToModelSpace(player types.PlayerTickData, mapModel *MapModel) types.PlayerTickData {
-	// Create a copy of the player data to avoid modifying the original
-	transformedPlayer := player
-
-	// Transform the position
-	transformedPlayer.Position = transformReplayToModelSpace(player.Position, mapModel)
-
-	// Note: View angles might also need adjustment depending on your coordinate system
-	// If the replay and model use different axis conventions, you may need to transform
-	// the view angles as well.
-
-	// If we're doing axis swapping (e.g., swapping X and Z), we need to adjust angles
-	if shouldTransformViewAngles() {
-		// Adjust view angles based on coordinate transformation
-		// This correction depends on exactly which axes were swapped
-
-		// Example transformation for the specific axis swap we identified:
-		// If we swapped X→Z, Y→-X, Z→Y, then we need to rotate the view angles
-		transformedPlayer.ViewAngleX = player.ViewAngleY + 90
-		transformedPlayer.ViewAngleY = -player.ViewAngleX
-
-		slog.Debug("Transformed view angles",
-			"original", r3.Vector{X: float64(player.ViewAngleX), Y: float64(player.ViewAngleY), Z: 0},
-			"transformed", r3.Vector{X: float64(transformedPlayer.ViewAngleX), Y: float64(transformedPlayer.ViewAngleY), Z: 0})
-	}
-
-	return transformedPlayer
-}
-
 // shouldTransformViewAngles returns true if we need to transform view angles
 // This is a helper function to control view angle transformations
 func shouldTransformViewAngles() bool {
 	// After analysis, we've determined that view angle transformation is not needed
 	// The view angles in the replay data already work correctly with the model space
 	return false
-}
-
-// DebugCoordinateTransformation provides a detailed analysis of the coordinate transformation
-// This is a diagnostic function to help pinpoint coordinate system issues
-func DebugCoordinateTransformation(mapModel *MapModel, testPoints []types.PlayerTickData) {
-	slog.Info("===== COORDINATE TRANSFORMATION DEBUG =====")
-
-	// Log map model information
-	slog.Info("Map model bounds:",
-		"min", mapModel.BaseModel.min,
-		"max", mapModel.BaseModel.max,
-		"size", r3.Vector{
-			X: mapModel.BaseModel.max.X - mapModel.BaseModel.min.X,
-			Y: mapModel.BaseModel.max.Y - mapModel.BaseModel.min.Y,
-			Z: mapModel.BaseModel.max.Z - mapModel.BaseModel.min.Z,
-		})
-
-	// Log triangle count and sector information
-	slog.Info("Map geometry:",
-		"triangles", len(mapModel.BaseModel.triangles),
-		"sectors", len(mapModel.BaseModel.sectors))
-
-	// Test specific known points
-	slog.Info("Testing coordinate transformations for known points:")
-	for i, point := range testPoints {
-		transformed := transformPlayerTickToModelSpace(point, mapModel)
-
-		// Calculate eye position
-		eyeHeight := 64.0 // Standard CS2 eye height
-		if point.IsCrouched {
-			eyeHeight = 46.0
-		}
-
-		eyePosOriginal := r3.Vector{
-			X: point.Position.X,
-			Y: point.Position.Y,
-			Z: point.Position.Z + eyeHeight,
-		}
-
-		eyePosTransformed := r3.Vector{
-			X: transformed.Position.X,
-			Y: transformed.Position.Y,
-			Z: transformed.Position.Z + eyeHeight,
-		}
-
-		slog.Info(fmt.Sprintf("Test point %d:", i),
-			"original", point.Position,
-			"transformed", transformed.Position,
-			"eyePos_orig", eyePosOriginal,
-			"eyePos_trans", eyePosTransformed)
-
-		// Try to find the nearest grid cell that has geometry
-		nearestCellDistance := math.MaxFloat64
-		var nearestCellKey GridKey
-		var nearestCellTriCount int
-
-		gridSize := mapModel.BaseModel.gridSize
-		cellX := int(math.Floor(transformed.Position.X / gridSize))
-		cellY := int(math.Floor(transformed.Position.Y / gridSize))
-		cellZ := int(math.Floor(transformed.Position.Z / gridSize))
-
-		// Search nearby cells
-		searchRadius := 10
-		for dx := -searchRadius; dx <= searchRadius; dx++ {
-			for dy := -searchRadius; dy <= searchRadius; dy++ {
-				for dz := -searchRadius; dz <= searchRadius; dz++ {
-					key := GridKey{x: cellX + dx, y: cellY + dy, z: cellZ + dz}
-					if triangles, ok := mapModel.BaseModel.sectors[key]; ok && len(triangles) > 0 {
-						// Calculate distance to cell center
-						cellCenterX := float64(key.x)*gridSize + gridSize/2
-						cellCenterY := float64(key.y)*gridSize + gridSize/2
-						cellCenterZ := float64(key.z)*gridSize + gridSize/2
-
-						cellCenter := r3.Vector{X: cellCenterX, Y: cellCenterY, Z: cellCenterZ}
-						dist := transformed.Position.Sub(cellCenter).Norm()
-
-						if dist < nearestCellDistance {
-							nearestCellDistance = dist
-							nearestCellKey = key
-							nearestCellTriCount = len(triangles)
-						}
-					}
-				}
-			}
-		}
-
-		if nearestCellDistance < math.MaxFloat64 {
-			slog.Info(fmt.Sprintf("Nearest geometry cell for point %d:", i),
-				"key", nearestCellKey,
-				"distance", nearestCellDistance,
-				"triangleCount", nearestCellTriCount)
-		} else {
-			slog.Warn(fmt.Sprintf("No geometry found near point %d!", i))
-		}
-	}
-
-	slog.Info("===== END COORDINATE TRANSFORMATION DEBUG =====")
-}
-
-// GetAdjustedEyePosition calculates the eye position based on the player's position and height
-func GetAdjustedEyePosition(shooter types.PlayerTickData, playerModel *Model, mapModel *MapModel) r3.Vector {
-	// Transform the player position to model space
-	transformedPosition := transformReplayToModelSpace(shooter.Position, mapModel)
-
-	// Standard CS2 eye heights
-	eyeHeight := 64.0 // Standing height
-	if shooter.IsCrouched {
-		eyeHeight = 46.0 // Crouching height
-	}
-
-	// Return the eye position
-	return r3.Vector{
-		X: transformedPosition.X,
-		Y: transformedPosition.Y,
-		Z: transformedPosition.Z + eyeHeight,
-	}
 }
 
 func (m *Model) GetVisibilityPoints() []r3.Vector {
