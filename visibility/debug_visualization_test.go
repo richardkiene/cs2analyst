@@ -109,6 +109,8 @@ func TestVerifyAxisFix(t *testing.T) {
 		{"A_Plywood", r3.Vector{X: 130.04379272460938, Y: -1922.3170166015625, Z: -39.96875}},
 		{"B_Arches", r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875}},
 		{"B_Apps", r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875}},
+		{"Unknown_Fail_Tick_29290_shooter", r3.Vector{X: -980.9349365234375, Y: -2327.1201171875, Z: -167.96875}},
+		{"Unknown_Fail_Tick_29290_target", r3.Vector{X: -1585.734130859375, Y: -2191.7490234375, Z: -253.405517578125}},
 	}
 
 	// Test each position

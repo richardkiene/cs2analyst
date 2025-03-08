@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"path/filepath"
 	"time"
 
 	"github.com/golang/geo/r3"
@@ -208,14 +209,21 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	los := LineOfSightSystem{
 		logger: slog.Default(),
 	}
-	mapM, err := ImportGLTFMapModel("C:\\Users\\richa\\OneDrive\\Desktop\\de_mirage_d.gltf", "de_mirage")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
+
+	// Import the map model
+	testMapFilePath := filepath.Join("C:/Users/richa/go/src/github.com/richardkiene/cs2analyst/input_models/de_mirage_model/", "de_mirage_d.gltf")
+	mapM, mapErr := ImportGLTFMapModel(testMapFilePath, "de_mirage")
+	if mapErr != nil {
+		return nil, fmt.Errorf("failed to create a new LOS system: %v", mapErr)
 	}
-	playerM, err := ImportGLTFPlayerModel("C:\\Users\\richa\\OneDrive\\Desktop\\ctm_sas.gltf")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create a new LOS system: %v", err)
+
+	// Import the player model
+	testModelFilePath := filepath.Join("C:/Users/richa/go/src/github.com/richardkiene/cs2analyst/input_models/ctm_sas_model/", "ctm_sas.gltf")
+	playerM, modelErr := ImportGLTFPlayerModel(testModelFilePath)
+	if modelErr != nil {
+		return nil, fmt.Errorf("failed to create a new LOS system: %v", modelErr)
 	}
+
 	los.MapModel = mapM
 	los.PlayerModel = playerM
 	return &los, nil

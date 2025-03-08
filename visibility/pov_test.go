@@ -301,6 +301,42 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			},
 			expected: false,
 		},
+		/*
+			{
+				"time": "2025-03-07T20:19:44.7099471-07:00",
+				"level": "DEBUG",
+				"msg": "Recorded damage event",
+				"tick": 29290,
+				"shooterSteamID": "76561197991944713",
+				"shooterPosition": {
+					"X": -980.9349365234375,
+					"Y": -2327.1201171875,
+					"Z": -167.96875
+				},
+				"shooterViewAngleX": 168.4791259765625,
+				"shooterViewAngleY": 9.140960693359375,
+				"targetSteamID": "76561199811297728",
+				"targetPosition": {
+					"X": -1585.734130859375,
+					"Y": -2191.7490234375,
+					"Z": -253.405517578125
+				},
+				"targetViewAngleX": -10.427734375,
+				"targetViewAngleY": -6.9893646240234375
+			}
+		*/
+		{
+			name: "Mirage -- Tick 29290 -- Unknown Vision Failure",
+			shooter: types.PlayerTickData{
+				Position:   r3.Vector{X: -980.9349365234375, Y: -2327.1201171875, Z: -167.96875},
+				ViewAngleX: 168.4791259765625,
+				ViewAngleY: 9.140960693359375,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{X: -1585.734130859375, Y: -2191.7490234375, Z: -253.405517578125},
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
