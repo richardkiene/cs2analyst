@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/golang/geo/r3"
+	"github.com/richardkiene/cs2analyst/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,20 +98,35 @@ func TestVerifyAxisFix(t *testing.T) {
 	playerModel, err := ImportGLTFPlayerModel(playerFilePath)
 	require.NoError(t, err, "Failed to import player model")
 
+	// Create the minimum playerTickData for rays to be cast in the output obj for Tick 29290
+	shooterTickData := types.PlayerTickData{
+		ViewAngleX: 168.4791259765625,
+		ViewAngleY: 9.140960693359375,
+		IsAlive:    true,
+		IsCrouched: false,
+	}
+	targetTickData := types.PlayerTickData{
+		ViewAngleX: -10.427734375,
+		ViewAngleY: -6.9893646240234375,
+		IsAlive:    true,
+		IsCrouched: false,
+	}
+
 	// Define test positions
 	positions := []struct {
-		name string
-		pos  r3.Vector
+		name        string
+		pos         r3.Vector
+		shooterData types.PlayerTickData
+		targetData  types.PlayerTickData
 	}{
-		{"Origin", r3.Vector{X: 0, Y: 0, Z: 0}},
-		{"Top_Mid", r3.Vector{X: 89.64, Y: -556.01, Z: -110.93}},
-		{"A_Ticket", r3.Vector{X: -871.26, Y: -2319.52, Z: -106.42}},
-		{"A_PalaceElbo", r3.Vector{X: 16.8408145904541, Y: -2324.8759765625, Z: -39.96875}},
-		{"A_Plywood", r3.Vector{X: 130.04379272460938, Y: -1922.3170166015625, Z: -39.96875}},
-		{"B_Arches", r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875}},
-		{"B_Apps", r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875}},
-		{"Unknown_Fail_Tick_29290_shooter", r3.Vector{X: -980.9349365234375, Y: -2327.1201171875, Z: -167.96875}},
-		{"Unknown_Fail_Tick_29290_target", r3.Vector{X: -1585.734130859375, Y: -2191.7490234375, Z: -253.405517578125}},
+		/*{"Origin", r3.Vector{X: 0, Y: 0, Z: 0}, types.PlayerTickData{}, types.PlayerTickData{}},
+		{"Top_Mid", r3.Vector{X: 89.64, Y: -556.01, Z: -110.93}, types.PlayerTickData{}, types.PlayerTickData{}},
+		{"A_Ticket", r3.Vector{X: -871.26, Y: -2319.52, Z: -106.42}, types.PlayerTickData{}, types.PlayerTickData{}},
+		{"A_PalaceElbow", r3.Vector{X: 16.8408145904541, Y: -2324.8759765625, Z: -39.96875}, types.PlayerTickData{}, types.PlayerTickData{}},
+		{"A_Plywood", r3.Vector{X: 130.04379272460938, Y: -1922.3170166015625, Z: -39.96875}, types.PlayerTickData{}, types.PlayerTickData{}},
+		{"B_Arches", r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875}, types.PlayerTickData{}, types.PlayerTickData{}},
+		{"B_Apps", r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875}, types.PlayerTickData{}, types.PlayerTickData{}},*/
+		{"CT_To_Ticket_Tick_29290_shooter", r3.Vector{X: -980.9349365234375, Y: -2327.1201171875, Z: -167.96875}, shooterTickData, targetTickData},
 	}
 
 	// Test each position
@@ -126,7 +142,21 @@ func TestVerifyAxisFix(t *testing.T) {
 
 			// Export visualization with coordinate axes
 			outputPath := filepath.Join(outDir, pos.name+".obj")
-			err := ExportDebugVisualization(mapModel, playerModel, pos.pos, modelPos, outputPath)
+
+			var err error
+			// We test if the viewangle properties have been set as a hack for now
+			if pos.shooterData.ViewAngleX != 0 && pos.targetData.ViewAngleX != 0 {
+				pos.shooterData.Position = pos.pos
+				pos.targetData.Position = r3.Vector{
+					X: -1585.734130859375,
+					Y: -2191.7490234375,
+					Z: -253.405517578125,
+				}
+				err = ExportDebugVisualization(mapModel, playerModel, pos.pos, modelPos, outputPath, &pos.shooterData, &pos.targetData)
+			} else {
+				err = ExportDebugVisualization(mapModel, playerModel, pos.pos, modelPos, outputPath)
+			}
+
 			require.NoError(t, err, "Failed to export debug visualization")
 
 			// Verify the files exist

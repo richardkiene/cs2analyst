@@ -229,6 +229,65 @@ func (v *Visibility) NewLineOfSightSystem(mapName, cs2MapsPath string) (*LineOfS
 	return &los, nil
 }
 
+// ExportVisibilityDebug exports a debug visualization showing
+// the sight lines checked in IsShooterPointingAtTarget
+func (v *Visibility) ExportVisibilityDebug(shooter, target types.PlayerTickData, outputPath string) error {
+	// Create a coordinate transformer
+	coords := NewDefaultSource2Coordinates()
+
+	// Transform the positions to model space
+	transformedShooterPos := coords.CS2ToModelSpace(shooter.Position)
+	transformedTargetPos := coords.CS2ToModelSpace(target.Position)
+
+	// Log the transformed positions for debugging
+	slog.Info("Exporting visibility debug",
+		"shooter", shooter.SteamID,
+		"target", target.SteamID,
+		"shooterPos", shooter.Position,
+		"targetPos", target.Position,
+		"transformedShooterPos", transformedShooterPos,
+		"transformedTargetPos", transformedTargetPos)
+
+	// Export the visualization with vectors
+	return ExportDebugVisualizationWithVectors(
+		v.LosSystem.MapModel,
+		v.LosSystem.PlayerModel,
+		shooter.Position,
+		transformedShooterPos,
+		&shooter,
+		&target,
+		outputPath)
+}
+
+// DebugVisualizeLOS creates a visualization of the line-of-sight check
+// showing shooter and target positions, view vectors, and sample rays
+func (los *LineOfSightSystem) DebugVisualizeLOS(shooter, target types.PlayerTickData, outputPath string) error {
+	// Create a coordinate transformer
+	coords := NewDefaultSource2Coordinates()
+
+	// Transform the positions to model space
+	transformedShooterPos := coords.CS2ToModelSpace(shooter.Position)
+	transformedTargetPos := coords.CS2ToModelSpace(target.Position)
+
+	slog.Info("Creating LOS debug visualization",
+		"shooter", shooter.SteamID,
+		"target", target.SteamID,
+		"shooterPos", shooter.Position,
+		"targetPos", target.Position,
+		"transformedShooterPos", transformedShooterPos,
+		"transformedTargetPos", transformedTargetPos)
+
+	// Export the visualization with vectors
+	return ExportDebugVisualizationWithVectors(
+		los.MapModel,
+		los.PlayerModel,
+		shooter.Position,
+		transformedShooterPos,
+		&shooter,
+		&target,
+		outputPath)
+}
+
 // Computes the eye position using the player model’s full height (i.e. the
 // difference between playerModel.max.Z and playerModel.min.Z). This assumes that
 // shooter.Position represents the feet.
