@@ -9,24 +9,9 @@ import (
 	"github.com/richardkiene/cs2analyst/types"
 )
 
-// IsShooterPointingAtTarget checks if the shooter is pointing at the target
-// by doing a direct line-of-sight check from shooter eye to each target point.
-// Updated to use coordinate transformation for proper alignment with map geometry.
-// IsShooterPointingAtTarget checks if the shooter is pointing at the target
-// by doing a direct line-of-sight check from shooter eye to multiple target points.
-// It sends multiple rays to account for partial visibility.
 func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel) bool {
-	// Calculate eye position in CS2 coordinates
-	eyeHeight := 64.0
-	if shooter.IsCrouched {
-		eyeHeight = 46.0
-	}
-
-	eyePos := r3.Vector{
-		X: shooter.Position.X,
-		Y: shooter.Position.Y,
-		Z: shooter.Position.Z + eyeHeight,
-	}
+	// Use the shared eye position function
+	eyePos := GetEyePosition(shooter)
 
 	// Transform to model space for ray casting
 	coords := NewDefaultSource2Coordinates()
@@ -42,13 +27,8 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 	// Get the shooter's forward vector in model space
 	shooterForward := coords.ApplyCS2Rotation(shooter.ViewAngleX, shooter.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
 
-	// Generate properly aligned sample points on the target player's body
-	targetSamplePoints := generateTargetSamplePointsWithRotation(transformedTargetPos, shooterForward)
-
-	// Generate multiple sample points on the target player's body to check visibility
-	// This accounts for partial visibility cases where only part of the player is visible
-	//targetSamplePoints := generateTargetSamplePoints(transformedTargetPos)
-	//targetSamplePoints := generateTargetSamplePointsInModelSpace(transformedTargetPos)
+	// Use the shared sample point generator
+	targetSamplePoints := GenerateTargetSamplePoints(transformedTargetPos, shooterForward)
 
 	// Try each sample point until we find one that's visible
 	for i, samplePoint := range targetSamplePoints {
@@ -62,17 +42,41 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 			"direction", dirToSample,
 			"distance", distance)
 
-		// Check for obstructions using ray casting
-		blocked := checkRayWithTransparency(
-			transformedEyePos,
-			dirToSample,
-			mapModel.BaseModel.bvh,
-			distance*1.1, // Add 10% for safety
-		)
+		// Use the shared ray casting function
+		blocked, hitPos, material := CastRayToTarget(transformedEyePos, dirToSample, mapModel.BaseModel.bvh, distance*1.1)
 
-		if !blocked {
+		if blocked {
+			hitDistance := transformedEyePos.Sub(hitPos).Norm()
+
+			// Use slightly more precise equality check for the distance comparison
+			const distanceEpsilon = 0.1
+			if math.Abs(hitDistance-distance) <= distanceEpsilon {
+				// Hit is exactly at target distance (within epsilon)
+				slog.Info("Ray hit exactly at target distance, considering visible",
+					"hitDistance", hitDistance,
+					"targetDistance", distance,
+					"difference", math.Abs(hitDistance-distance))
+				return true
+			}
+
+			// Check if hit is beyond target (this shouldn't happen with precise ray casting)
+			if hitDistance > distance+distanceEpsilon {
+				slog.Info("Hit is beyond target, target is visible",
+					"hitDistance", hitDistance,
+					"targetDistance", distance,
+					"difference", hitDistance-distance)
+				return true
+			}
+
+			slog.Info("Ray blocked by material",
+				"material", material.Name,
+				"hitDistance", hitDistance,
+				"targetDistance", distance,
+				"hitPos", hitPos)
+		} else {
+			// No blocking!
 			slog.Info("Target is visible via sample point", "index", i, "position", samplePoint)
-			return true // Found a visible sample point
+			return true
 		}
 	}
 
@@ -277,13 +281,16 @@ func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDis
 		// Calculate hit distance for this intersection
 		hitDistance := currentOrigin.Sub(hitPos).Norm()
 
-		// Use a small epsilon (e.g. 0.1) to handle floating point comparisons
-		if hitDistance >= maxDistance-0.1 {
-			slog.Info("Hit is beyond or at target distance, considering target visible",
+		// Check if hit is *exactly* at target distance (within epsilon)
+		// This is more precise than the percentage-based check
+		const distanceEpsilon = 0.1 // Small value for floating point precision
+		if math.Abs(hitDistance-maxDistance) <= distanceEpsilon {
+			slog.Info("Hit is at exact target distance (within epsilon), considering target visible",
+				"materialName", material.Name,
 				"hitDistance", hitDistance,
 				"maxDistance", maxDistance,
-				"difference", maxDistance-hitDistance)
-			return false // Not blocked - hit is beyond target
+				"difference", math.Abs(hitDistance-maxDistance))
+			return false // No blocking - hit is the target itself
 		}
 
 		// Track the material's transparency status
@@ -379,7 +386,9 @@ func rayIntersectsBVHClosestHit(
 		for i, tri := range node.triangles {
 			if rayIntersectsTriangleWithHit(rayOrigin, rayDir, tri, hitPosition) {
 				dist := rayOrigin.Sub(*hitPosition).Norm()
-				if dist < minDistance {
+				// When comparing distances, use an epsilon for floating point equality
+				const epsilon = 1e-6
+				if dist < minDistance-epsilon {
 					minDistance = dist
 					closestHit = *hitPosition
 					// Store the material & the index for that triangle

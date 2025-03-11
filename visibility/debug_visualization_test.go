@@ -225,6 +225,58 @@ func TestVerifyAxisFix(t *testing.T) {
 				IsCrouched: false,
 			},
 		},
+		{
+			"Tick_109075_Window_To_Bench",
+			r3.Vector{
+				X: -1149.90234375,
+				Y: -612.816162109375,
+				Z: -167.96875,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1149.90234375,
+					Y: -612.816162109375,
+					Z: -167.96875,
+				},
+				ViewAngleX: -32.27027893066406,
+				ViewAngleY: 14.440841674804688,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -856.7142333984375,
+					Y: -788.9706420898438,
+					Z: -221.96875,
+				},
+				ViewAngleX: 85.61611938476562,
+				ViewAngleY: -4.375640869140625,
+			},
+		},
+		{
+			"Tick_109040_Window_To_Bench",
+			r3.Vector{
+				X: -1177.66,
+				Y: -674.00,
+				Z: -168.13,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1177.66,
+					Y: -674.00,
+					Z: -168.13,
+				},
+				ViewAngleX: 12.69,
+				ViewAngleY: 4.59,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -852.83,
+					Y: -788.79,
+					Z: -220.81,
+				},
+				ViewAngleX: 84.77,
+				ViewAngleY: -3.16,
+			},
+		},
 	}
 
 	// Test each position

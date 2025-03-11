@@ -288,23 +288,6 @@ func (los *LineOfSightSystem) DebugVisualizeLOS(shooter, target types.PlayerTick
 		outputPath)
 }
 
-// Computes the eye position using the player model’s full height (i.e. the
-// difference between playerModel.max.Z and playerModel.min.Z). This assumes that
-// shooter.Position represents the feet.
-func GetEyePosition(shooter types.PlayerTickData, playerModel *Model) r3.Vector {
-	height := playerModel.max.Z - playerModel.min.Z
-	// Standard CS2 eye height is 64 units when standing
-	eyeHeight := height * 0.889 // Adjusted multiplier to get closer to 64 units
-	if shooter.IsCrouched {
-		eyeHeight *= 0.719 // Adjusted to get closer to 46 units when crouching (64 * 0.719 ≈ 46)
-	}
-	return r3.Vector{
-		X: shooter.Position.X,
-		Y: shooter.Position.Y,
-		Z: shooter.Position.Z + eyeHeight,
-	}
-}
-
 // GetRelevantMapGeometry returns triangles along the line from start->end
 func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []int {
 	visited := make(map[GridKey]bool, 128)
@@ -546,20 +529,25 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
 
 		if debugEnabled {
-			// Use the transformed eye position for logging
-			transformedShooter := transformPlayerTickToModelSpace(shooterTick, v.LosSystem.MapModel)
-			eyePos := GetAdjustedEyePosition(transformedShooter, v.LosSystem.PlayerModel, v.LosSystem.MapModel)
+			// Use the shared utility functions for consistency
+			coords := NewDefaultSource2Coordinates()
 
-			transformedTarget := transformPlayerTickToModelSpace(targetTick, v.LosSystem.MapModel)
+			// Use shared GetEyePosition instead of custom transformation
+			eyePos := GetEyePosition(shooterTick)
+			transformedEyePos := coords.CS2ToModelSpace(eyePos)
+
+			// Transform positions consistently
+			transformedShooterPos := coords.CS2ToModelSpace(shooterTick.Position)
+			transformedTargetPos := coords.CS2ToModelSpace(targetTick.Position)
 
 			slog.Info("Visibility check",
 				"tick", tick,
 				"canSeeTarget", canSeeTarget,
 				"originalShooterPos", shooterTick.Position,
-				"transformedShooterPos", transformedShooter.Position,
-				"eyePos", eyePos,
+				"transformedShooterPos", transformedShooterPos,
+				"eyePos", transformedEyePos,
 				"originalTargetPos", targetTick.Position,
-				"transformedTargetPos", transformedTarget.Position)
+				"transformedTargetPos", transformedTargetPos)
 		}
 
 		if canSeeTarget {
@@ -818,7 +806,7 @@ func CanSeeTarget(shooter, target types.PlayerTickData, playerModel *Model, mapM
 	}
 
 	// Compute the shooter's eye position
-	eyePos := GetEyePosition(shooter, playerModel)
+	eyePos := GetEyePosition(shooter)
 
 	if debugEnabled {
 		slog.Info("CanSeeTarget check",
@@ -1203,7 +1191,7 @@ func (node *BVHNode) RayIntersects(origin, dir r3.Vector, maxT float64) bool {
 }
 
 func DebugEyePosConsole(shooter types.PlayerTickData, playerModel *Model) {
-	eyePos := GetEyePosition(shooter, playerModel)
+	eyePos := GetEyePosition(shooter)
 	height := playerModel.max.Z - playerModel.min.Z
 
 	fmt.Printf("\n=== DebugEyePosConsole ===\n")

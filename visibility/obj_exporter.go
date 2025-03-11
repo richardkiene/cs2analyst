@@ -830,17 +830,12 @@ func ExportCombinedModelWithVectors(
 	file.WriteString("\ng shooter_model\n")
 	file.WriteString("usemtl shooter_material\n\n")
 
-	// Calculate yaw for the shooter model
 	coords := NewDefaultSource2Coordinates()
-	// For the shooter
 	shooterForward := coords.ApplyCS2Rotation(shooterData.ViewAngleX, shooterData.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
-	// Define up vector (usually Y axis in model space)
-	//shooterUp := r3.Vector{Y: 1, X: 0, Z: 0} // May need adjustment based on your coordinate system
 
 	slog.Info(
 		"Rotation debug",
 		"shooterForward", shooterForward,
-		//"shooterUp", shooterUp,
 	)
 
 	for _, tri := range playerModel.triangles {
@@ -961,21 +956,8 @@ func ExportCombinedModelWithVectors(
 
 	// Now add forward vectors for shooter and target if they are provided
 	if shooterData != nil {
-		// First determine the eye position in model space
 		coords := NewDefaultSource2Coordinates()
-
-		// Calculate eye position in CS2 coordinates
-		eyeHeight := 64.0
-		if shooterData.IsCrouched {
-			eyeHeight = 46.0
-		}
-
-		// Calculate eye position in CS2 coordinates
-		shooterEyePos := r3.Vector{
-			X: shooterData.Position.X,
-			Y: shooterData.Position.Y,
-			Z: shooterData.Position.Z + eyeHeight,
-		}
+		shooterEyePos := GetEyePosition(*shooterData)
 
 		// Transform to model space
 		modelEyePos := coords.CS2ToModelSpace(shooterEyePos)
@@ -1057,42 +1039,7 @@ func ExportCombinedModelWithVectors(
 				playerWidth  = 32.0
 			)
 
-			// Generate sample points with correct axis orientations
-			// In model space: X is vertical, Y and Z are horizontal
-			samplePoints := []r3.Vector{
-				// Center position (base of model)
-				targetModelPos,
-
-				// Head level (top)
-				{X: targetModelPos.X + playerHeight*0.85, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-				// Chest level (upper body)
-				{X: targetModelPos.X + playerHeight*0.65, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-				// Waist level (mid body)
-				{X: targetModelPos.X + playerHeight*0.45, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-				// Legs (lower body)
-				{X: targetModelPos.X + playerHeight*0.25, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-				// Right side (at chest height)
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z + playerWidth*0.35},
-
-				// Left side (at chest height)
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z - playerWidth*0.35},
-
-				// Front (at chest height)
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.35, Z: targetModelPos.Z},
-
-				// Back (at chest height)
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.35, Z: targetModelPos.Z},
-
-				// Corners (diagonal offsets) at chest height
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
-				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
-			}
+			samplePoints := GenerateTargetSamplePoints(targetModelPos, shooterForward)
 
 			slog.Info("Debug ray traces",
 				"eyePos", modelEyePos,

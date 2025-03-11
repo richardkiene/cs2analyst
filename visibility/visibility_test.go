@@ -23,8 +23,7 @@ func TestRayFOVConeConsistency(t *testing.T) {
 		ViewAngleY: 0,
 		IsAlive:    true,
 	}
-	model := CreateTestPlayerModel()
-	eyePos := GetEyePosition(shooter, model)
+	eyePos := GetEyePosition(shooter)
 	forward := shooter.ForwardVector() // expected (1,0,0)
 
 	// Compute a debug ray: from eyePos to eyePos + forward * distance.
@@ -125,8 +124,7 @@ func TestVisibilityFOVConsistency(t *testing.T) {
 		Position: r3.Vector{X: 100, Y: 0, Z: 0},
 		IsAlive:  true,
 	}
-	playerModel := CreateTestPlayerModel()
-	eyePos := GetEyePosition(shooter, playerModel)
+	eyePos := GetEyePosition(shooter)
 	assert.True(t, shooter.IsInFieldOfViewFromEye(target.Position, eyePos), "Target directly in front should be in FOV")
 }
 
@@ -189,13 +187,10 @@ func TestCoordinateSystemConsistency(t *testing.T) {
 		},
 	}
 
-	// Create a simple player model for testing
-	playerModel := CreateTestPlayerModel()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Get eye position (this is important for coordinate system verification)
-			eyePos := GetEyePosition(tt.shooter, playerModel)
+			eyePos := GetEyePosition(tt.shooter)
 
 			// Test if target is in FOV
 			inFOV := tt.shooter.IsInFieldOfViewFromEye(tt.target.Position, eyePos)
@@ -330,8 +325,6 @@ func TestCanSeeTargetCoordinateSystem(t *testing.T) {
 
 // TestGetEyePositionHeight ensures eye height calculations match Source2 conventions
 func TestGetEyePositionHeight(t *testing.T) {
-	playerModel := CreateTestPlayerModel()
-
 	tests := []struct {
 		name   string
 		player types.PlayerTickData
@@ -362,7 +355,7 @@ func TestGetEyePositionHeight(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			eyePos := GetEyePosition(tt.player, playerModel)
+			eyePos := GetEyePosition(tt.player)
 			assert.InDelta(t, tt.wantZ, eyePos.Z, 1.0, tt.desc)
 		})
 	}
@@ -384,7 +377,7 @@ func TestEyeDirectionConsistency(t *testing.T) {
 		IsAlive:    true,
 	}
 
-	eyePos := GetEyePosition(shooter, &model.BaseModel)
+	eyePos := GetEyePosition(shooter)
 
 	// Since GetEyePosition only adds Z height and doesn't affect X/Y,
 	// the horizontal components of the eye offset should be zero

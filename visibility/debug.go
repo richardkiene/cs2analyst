@@ -232,7 +232,7 @@ func CreateShooterCentricFOVUsingTargetDistance(
 	fmt.Fprintf(writer, "# Shooter-centric partial FOV debug\n")
 
 	vertexIndex := 1
-	eyePos := GetEyePosition(shooter, playerModel)
+	eyePos := GetEyePosition(shooter)
 
 	// Choose direction based on shouldMatchForward parameter
 	toTarget := target.Position.Sub(shooter.Position).Normalize()

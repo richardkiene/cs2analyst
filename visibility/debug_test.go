@@ -94,7 +94,7 @@ func TestObjFileDirectionConsistency(t *testing.T) {
 	mapModel := CreateTestPlayerModel()
 	playerModel := CreateTestPlayerModel()
 
-	eyePos := GetEyePosition(shooter, playerModel)
+	eyePos := GetEyePosition(shooter)
 
 	// Get both forward vector and vector to target for comparison
 	forward := shooter.ForwardVector()
