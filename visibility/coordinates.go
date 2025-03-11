@@ -117,6 +117,27 @@ func (sc *Source2Coordinates) ModelSpaceToCS2(modelPos r3.Vector) r3.Vector {
 
 func (sc *Source2Coordinates) ApplyCS2Rotation(viewAngleX, viewAngleY float32, direction r3.Vector) r3.Vector {
 	// Convert angles to radians
+	pitchRad := float64(viewAngleY) * math.Pi / 180.0 // This is X (pitch)
+	yawRad := float64(viewAngleX) * math.Pi / 180.0   // This is Y (yaw)
+
+	// Calculate forward vector using Source engine's AngleVectors
+	forward := r3.Vector{
+		X: math.Cos(pitchRad) * math.Cos(yawRad),
+		Y: math.Cos(pitchRad) * math.Sin(yawRad),
+		Z: -math.Sin(pitchRad),
+	}
+
+	// Transform to model space
+	return r3.Vector{
+		X: forward.Z,
+		Y: forward.X,
+		Z: forward.Y,
+	}
+}
+
+// TODO: OLD AND MAYBE BUSTED
+/*func (sc *Source2Coordinates) ApplyCS2Rotation(viewAngleX, viewAngleY float32, direction r3.Vector) r3.Vector {
+	// Convert angles to radians
 	yawRad := float64(viewAngleX) * math.Pi / 180.0
 	pitchRad := float64(viewAngleY) * math.Pi / 180.0
 
@@ -129,7 +150,7 @@ func (sc *Source2Coordinates) ApplyCS2Rotation(viewAngleX, viewAngleY float32, d
 
 	// Apply coordinate transformation
 	return sc.CS2ToModelSpace(forward)
-}
+}*/
 
 // transformPlayerTickToModelSpace transforms a PlayerTickData to match the coordinate
 // system used by the map model (after GLTF transformation)

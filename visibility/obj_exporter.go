@@ -3,6 +3,7 @@ package visibility
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -726,11 +727,19 @@ func ExportCombinedModelWithVectors(
 	mtlFile.WriteString("Ns 10.0\n")
 	mtlFile.WriteString("d 1.0\n\n")
 
-	// Material for player
-	mtlFile.WriteString("newmtl player_material\n")
-	mtlFile.WriteString("Kd 0.2 0.5 0.8\n")
-	mtlFile.WriteString("Ka 0.1 0.1 0.2\n")
-	mtlFile.WriteString("Ks 0.2 0.2 0.5\n")
+	// Material for shooter player
+	mtlFile.WriteString("newmtl shooter_material\n")
+	mtlFile.WriteString("Kd 0.2 0.7 0.2\n") // Green for shooter
+	mtlFile.WriteString("Ka 0.1 0.2 0.1\n")
+	mtlFile.WriteString("Ks 0.2 0.2 0.2\n")
+	mtlFile.WriteString("Ns 20.0\n")
+	mtlFile.WriteString("d 1.0\n\n")
+
+	// Material for target player
+	mtlFile.WriteString("newmtl target_material\n")
+	mtlFile.WriteString("Kd 0.8 0.2 0.2\n") // Red for target
+	mtlFile.WriteString("Ka 0.2 0.1 0.1\n")
+	mtlFile.WriteString("Ks 0.2 0.2 0.2\n")
 	mtlFile.WriteString("Ns 20.0\n")
 	mtlFile.WriteString("d 1.0\n\n")
 
@@ -814,32 +823,96 @@ func ExportCombinedModelWithVectors(
 		file.WriteString(fmt.Sprintf("f %d %d %d\n", baseIdx, baseIdx+1, baseIdx+2))
 	}
 
-	// Track player vertex index start
-	playerVertexStart := 1 + (len(mapModel.BaseModel.triangles) * 3)
+	// Track shooter player vertex index start
+	shooterVertexStart := 1 + (len(mapModel.BaseModel.triangles) * 3)
 
-	// Write player model triangles
-	file.WriteString("\ng player_model\n")
-	file.WriteString("usemtl player_material\n\n")
+	// Write shooter player model triangles
+	file.WriteString("\ng shooter_model\n")
+	file.WriteString("usemtl shooter_material\n\n")
+
+	// Calculate yaw for the shooter model
+	coords := NewDefaultSource2Coordinates()
+	// For the shooter
+	shooterForward := coords.ApplyCS2Rotation(shooterData.ViewAngleX, shooterData.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
+	// Define up vector (usually Y axis in model space)
+	//shooterUp := r3.Vector{Y: 1, X: 0, Z: 0} // May need adjustment based on your coordinate system
+
+	slog.Info(
+		"Rotation debug",
+		"shooterForward", shooterForward,
+		//"shooterUp", shooterUp,
+	)
 
 	for _, tri := range playerModel.triangles {
-		// Translate to player position
+		// First translate to shooter position
 		v1 := r3.Vector{X: tri.V1.X + modelPosition.X, Y: tri.V1.Y + modelPosition.Y, Z: tri.V1.Z + modelPosition.Z}
 		v2 := r3.Vector{X: tri.V2.X + modelPosition.X, Y: tri.V2.Y + modelPosition.Y, Z: tri.V2.Z + modelPosition.Z}
 		v3 := r3.Vector{X: tri.V3.X + modelPosition.X, Y: tri.V3.Y + modelPosition.Y, Z: tri.V3.Z + modelPosition.Z}
 
+		// Rotate around vertical axis to face correct direction
+		v1 = rotateModelAroundVerticalAxis(v1, modelPosition, shooterForward)
+		v2 = rotateModelAroundVerticalAxis(v2, modelPosition, shooterForward)
+		v3 = rotateModelAroundVerticalAxis(v3, modelPosition, shooterForward)
+
+		// Write vertices
 		file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", v1.X, v1.Y, v1.Z))
 		file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", v2.X, v2.Y, v2.Z))
 		file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", v3.X, v3.Y, v3.Z))
 	}
 
-	// Write player faces
+	// Write shooter faces
 	for i := 0; i < len(playerModel.triangles); i++ {
-		baseIdx := playerVertexStart + (i * 3)
+		baseIdx := shooterVertexStart + (i * 3)
 		file.WriteString(fmt.Sprintf("f %d %d %d\n", baseIdx, baseIdx+1, baseIdx+2))
 	}
 
-	// Calculate the next vertex index
-	nextVertexIndex := playerVertexStart + (len(playerModel.triangles) * 3)
+	// Calculate the next vertex index after shooter model
+	nextVertexIndex := shooterVertexStart + (len(playerModel.triangles) * 3)
+
+	// Now add the target player model if targetData is provided
+	if targetData != nil {
+		// Transform the target position to model space
+		coords := NewDefaultSource2Coordinates()
+		targetModelPos := coords.CS2ToModelSpace(targetData.Position)
+
+		file.WriteString("\ng target_model\n")
+		file.WriteString("usemtl target_material\n\n")
+
+		targetVertexStart := nextVertexIndex
+		targetForward := coords.ApplyCS2Rotation(targetData.ViewAngleX, targetData.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
+
+		slog.Info(
+			"Rotation debug",
+			"targetForward", targetForward,
+			//"shooterUp", shooterUp,
+		)
+
+		for _, tri := range playerModel.triangles {
+			// First translate to shooter position
+			v1 := r3.Vector{X: tri.V1.X + targetModelPos.X, Y: tri.V1.Y + targetModelPos.Y, Z: tri.V1.Z + targetModelPos.Z}
+			v2 := r3.Vector{X: tri.V2.X + targetModelPos.X, Y: tri.V2.Y + targetModelPos.Y, Z: tri.V2.Z + targetModelPos.Z}
+			v3 := r3.Vector{X: tri.V3.X + targetModelPos.X, Y: tri.V3.Y + targetModelPos.Y, Z: tri.V3.Z + targetModelPos.Z}
+
+			// Rotate around vertical axis to face correct direction
+			v1 = rotateModelAroundVerticalAxis(v1, targetModelPos, targetForward)
+			v2 = rotateModelAroundVerticalAxis(v2, targetModelPos, targetForward)
+			v3 = rotateModelAroundVerticalAxis(v3, targetModelPos, targetForward)
+
+			// Write vertices
+			file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", v1.X, v1.Y, v1.Z))
+			file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", v2.X, v2.Y, v2.Z))
+			file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", v3.X, v3.Y, v3.Z))
+		}
+
+		// Write target faces
+		for i := 0; i < len(playerModel.triangles); i++ {
+			baseIdx := targetVertexStart + (i * 3)
+			file.WriteString(fmt.Sprintf("f %d %d %d\n", baseIdx, baseIdx+1, baseIdx+2))
+		}
+
+		// Update next vertex index
+		nextVertexIndex = targetVertexStart + (len(playerModel.triangles) * 3)
+	}
 
 	// Add coordinate axes - these are just lines, not triangles
 	// Define axis length - longer for better visibility
@@ -911,28 +984,23 @@ func ExportCombinedModelWithVectors(
 		file.WriteString("g eye_position\n")
 		file.WriteString("usemtl eye_position\n")
 
+		// Store eye position vertex index for ray tracing
+		eyePositionVertexIndex := nextVertexIndex
+
 		// Eye position vertex
 		file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", modelEyePos.X, modelEyePos.Y, modelEyePos.Z))
-		nextVertexIndex += 1
-
-		// Create a small sphere to represent the eye position (using 1 vertex for now)
-		// In a more complex implementation, we could add a small sphere mesh here
+		nextVertexIndex++
 
 		// Add shooter forward vector
 		file.WriteString("g shooter_forward\n")
 		file.WriteString("usemtl shooter_forward\n")
 
-		// Get forward vector in CS2 coordinates
-		shooterForward := shooterData.ForwardVector()
+		// Correctly transform direction vector to model space
+		// Direction vectors should be rotated but not translated
+		// This requires using the ApplyCS2Rotation function instead of CS2ToModelSpace
+		modelForward := coords.ApplyCS2Rotation(shooterData.ViewAngleX, shooterData.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
 
-		// Transform forward vector to model space (note: we need to transform direction differently than position)
-		// We can either use the CS2 forward vector and transform it, or directly apply the rotation in model space
-		modelForward := coords.CS2ToModelSpace(shooterForward)
-
-		// Alternative approach using rotation directly in model space
-		// modelForward := coords.ApplyCS2Rotation(shooterData.ViewAngleX, shooterData.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
-
-		// Scale forward vector to be visible (use a longer length for better visibility)
+		// Scale forward vector to be visible
 		forwardLength := 70.0
 		scaledForward := modelForward.Mul(forwardLength)
 
@@ -948,12 +1016,12 @@ func ExportCombinedModelWithVectors(
 
 		nextVertexIndex += 2
 
-		// If we have target data, visualize the sample rays that would be cast in IsShooterPointingAtTarget
+		// If we have target data, visualize the sample rays that would be cast
 		if targetData != nil {
 			// Transform the target position to model space
 			targetModelPos := coords.CS2ToModelSpace(targetData.Position)
 
-			// Add target forward vector
+			// Add target forward vector if needed
 			if true {
 				file.WriteString("g target_forward\n")
 				file.WriteString("usemtl target_forward\n")
@@ -962,9 +1030,6 @@ func ExportCombinedModelWithVectors(
 				targetForward := targetData.ForwardVector()
 				// Transform target forward vector to model space
 				modelTargetForward := coords.CS2ToModelSpace(targetForward)
-
-				// Alternative approach using rotation directly
-				// modelTargetForward := coords.ApplyCS2Rotation(targetData.ViewAngleX, targetData.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
 
 				// Scale forward vector
 				scaledTargetForward := modelTargetForward.Mul(forwardLength)
@@ -982,11 +1047,11 @@ func ExportCombinedModelWithVectors(
 				nextVertexIndex += 2
 			}
 
-			// Generate and visualize the sample points that would be used in IsShooterPointingAtTarget
+			// Generate and visualize the sample points for ray tracing
 			file.WriteString("g sample_points\n")
 			file.WriteString("usemtl sample_point\n")
 
-			// Standard player dimensions in CS2 units (matching the values in generateTargetSamplePoints)
+			// Standard player dimensions in CS2 units
 			const (
 				playerHeight = 72.0
 				playerWidth  = 32.0
@@ -1026,10 +1091,10 @@ func ExportCombinedModelWithVectors(
 			}
 
 			// Add vertices for each sample point
-			sampleVertices := make([]int, len(samplePoints))
+			sampleVertexIndices := make([]int, len(samplePoints))
 			for i, point := range samplePoints {
 				file.WriteString(fmt.Sprintf("v %.6f %.6f %.6f\n", point.X, point.Y, point.Z))
-				sampleVertices[i] = nextVertexIndex
+				sampleVertexIndices[i] = nextVertexIndex
 				nextVertexIndex++
 			}
 
@@ -1037,9 +1102,9 @@ func ExportCombinedModelWithVectors(
 			file.WriteString("g ray_traces\n")
 			file.WriteString("usemtl ray_trace\n")
 
-			for _, sampleVertex := range sampleVertices {
+			for _, sampleVertexIndex := range sampleVertexIndices {
 				// Create a line from eye position to sample point
-				file.WriteString(fmt.Sprintf("l %d %d\n", nextVertexIndex-len(samplePoints)-2, sampleVertex))
+				file.WriteString(fmt.Sprintf("l %d %d\n", eyePositionVertexIndex, sampleVertexIndex))
 			}
 		}
 	}
@@ -1234,4 +1299,96 @@ func sanitizeMaterialName(name string) string {
 	}
 
 	return result
+}
+
+func rotateModelAroundVerticalAxis(v r3.Vector, centerPos r3.Vector, forward r3.Vector) r3.Vector {
+	// Translate vertex to origin
+	v = r3.Vector{
+		X: v.X - centerPos.X,
+		Y: v.Y - centerPos.Y,
+		Z: v.Z - centerPos.Z,
+	}
+
+	// Calculate yaw angle (rotation around vertical axis)
+	// In model space, the forward direction is on Y-Z plane, and the model is facing +Z by default
+	yawRad := math.Atan2(forward.Z, forward.Y)
+
+	// Rotate around X axis (vertical in model space)
+	cosYaw := math.Cos(yawRad)
+	sinYaw := math.Sin(yawRad)
+	rotatedV := r3.Vector{
+		X: v.X, // X axis is unchanged in yaw rotation
+		Y: v.Y*cosYaw - v.Z*sinYaw,
+		Z: v.Y*sinYaw + v.Z*cosYaw,
+	}
+
+	// Translate back to original position
+	return r3.Vector{
+		X: rotatedV.X + centerPos.X,
+		Y: rotatedV.Y + centerPos.Y,
+		Z: rotatedV.Z + centerPos.Z,
+	}
+}
+
+func rotateModelToFacingDirection(v r3.Vector, centerPos r3.Vector, forward r3.Vector) r3.Vector {
+	// Translate vertex to origin
+	v = r3.Vector{
+		X: v.X - centerPos.X,
+		Y: v.Y - centerPos.Y,
+		Z: v.Z - centerPos.Z,
+	}
+
+	// Normalize forward vector
+	forward = forward.Normalize()
+
+	// Calculate yaw angle (rotation around vertical axis)
+	// In model space, the vertical axis is X
+	yawRad := math.Atan2(forward.Z, forward.Y)
+
+	// First rotate around X axis (vertical in model space)
+	cosYaw := math.Cos(yawRad)
+	sinYaw := math.Sin(yawRad)
+	yRotated := r3.Vector{
+		X: v.X, // X axis is unchanged in yaw rotation
+		Y: v.Y*cosYaw - v.Z*sinYaw,
+		Z: v.Y*sinYaw + v.Z*cosYaw,
+	}
+
+	// Apply an additional 90-degree rotation around Z axis to make model stand upright
+	rotatedV := r3.Vector{
+		X: yRotated.X*math.Cos(math.Pi/2) - yRotated.Y*math.Sin(math.Pi/2),
+		Y: yRotated.X*math.Sin(math.Pi/2) + yRotated.Y*math.Cos(math.Pi/2),
+		Z: yRotated.Z,
+	}
+
+	// Translate back to original position
+	return r3.Vector{
+		X: rotatedV.X + centerPos.X,
+		Y: rotatedV.Y + centerPos.Y,
+		Z: rotatedV.Z + centerPos.Z,
+	}
+}
+
+func rotateVertexAroundYAxis(v r3.Vector, centerPos r3.Vector, yawRadians float64) r3.Vector {
+	// Translate to origin
+	v = r3.Vector{
+		X: v.X - centerPos.X,
+		Y: v.Y - centerPos.Y,
+		Z: v.Z - centerPos.Z,
+	}
+
+	// Rotate around Y axis in model space (which might be X or Z in your system)
+	// Try this version which rotates in X-Z plane (around Y axis)
+	rotatedV := r3.Vector{
+		X: v.X*math.Cos(yawRadians) + v.Z*math.Sin(yawRadians),
+		Y: v.Y,
+		Z: -v.X*math.Sin(yawRadians) + v.Z*math.Cos(yawRadians),
+	}
+
+	// Translate back
+	return r3.Vector{
+		X: rotatedV.X + centerPos.X,
+		Y: rotatedV.Y + centerPos.Y,
+		Z: rotatedV.Z + centerPos.Z,
+	}
 }

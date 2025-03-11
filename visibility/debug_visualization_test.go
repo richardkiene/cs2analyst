@@ -1,6 +1,8 @@
 package visibility
 
 import (
+	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,20 +100,6 @@ func TestVerifyAxisFix(t *testing.T) {
 	playerModel, err := ImportGLTFPlayerModel(playerFilePath)
 	require.NoError(t, err, "Failed to import player model")
 
-	// Create the minimum playerTickData for rays to be cast in the output obj for Tick 29290
-	shooterTickData := types.PlayerTickData{
-		ViewAngleX: 168.4791259765625,
-		ViewAngleY: 9.140960693359375,
-		IsAlive:    true,
-		IsCrouched: false,
-	}
-	targetTickData := types.PlayerTickData{
-		ViewAngleX: -10.427734375,
-		ViewAngleY: -6.9893646240234375,
-		IsAlive:    true,
-		IsCrouched: false,
-	}
-
 	// Define test positions
 	positions := []struct {
 		name        string
@@ -124,9 +112,59 @@ func TestVerifyAxisFix(t *testing.T) {
 		{"A_Ticket", r3.Vector{X: -871.26, Y: -2319.52, Z: -106.42}, types.PlayerTickData{}, types.PlayerTickData{}},
 		{"A_PalaceElbow", r3.Vector{X: 16.8408145904541, Y: -2324.8759765625, Z: -39.96875}, types.PlayerTickData{}, types.PlayerTickData{}},
 		{"A_Plywood", r3.Vector{X: 130.04379272460938, Y: -1922.3170166015625, Z: -39.96875}, types.PlayerTickData{}, types.PlayerTickData{}},
-		{"B_Arches", r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875}, types.PlayerTickData{}, types.PlayerTickData{}},
-		{"B_Apps", r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875}, types.PlayerTickData{}, types.PlayerTickData{}},*/
-		{"CT_To_Ticket_Tick_29290_shooter", r3.Vector{X: -980.9349365234375, Y: -2327.1201171875, Z: -167.96875}, shooterTickData, targetTickData},
+		{"B_Arches", r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875}, types.PlayerTickData{}, types.PlayerTickData{}},*/
+		{
+			"B_Apps",
+			r3.Vector{
+				X: -1652.548828125,
+				Y: 746.81103515625,
+				Z: -47.96875,
+			},
+			types.PlayerTickData{
+				Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
+				ViewAngleX: -75.15026092529297,
+				ViewAngleY: 10.731582641601562,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+			types.PlayerTickData{
+				Position:   r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875},
+				ViewAngleX: 106.509033203125,
+				ViewAngleY: -12.48699951171875,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+		},
+		{
+			"CT_To_Ticket_Tick_29290_shooter",
+			r3.Vector{
+				X: -980.9349365234375,
+				Y: -2327.1201171875,
+				Z: -167.96875,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -980.9349365234375,
+					Y: -2327.1201171875,
+					Z: -167.96875,
+				},
+				ViewAngleX: 168.4791259765625,
+				ViewAngleY: 9.140960693359375,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1585.734130859375,
+					Y: -2191.7490234375,
+					Z: -253.405517578125,
+				},
+				ViewAngleX: -10.427734375,
+				ViewAngleY: -6.9893646240234375,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+		},
 	}
 
 	// Test each position
@@ -146,12 +184,7 @@ func TestVerifyAxisFix(t *testing.T) {
 			var err error
 			// We test if the viewangle properties have been set as a hack for now
 			if pos.shooterData.ViewAngleX != 0 && pos.targetData.ViewAngleX != 0 {
-				pos.shooterData.Position = pos.pos
-				pos.targetData.Position = r3.Vector{
-					X: -1585.734130859375,
-					Y: -2191.7490234375,
-					Z: -253.405517578125,
-				}
+				DebugShooterTargetVectors(&pos.shooterData, &pos.targetData)
 				err = ExportDebugVisualization(mapModel, playerModel, pos.pos, modelPos, outputPath, &pos.shooterData, &pos.targetData)
 			} else {
 				err = ExportDebugVisualization(mapModel, playerModel, pos.pos, modelPos, outputPath)
@@ -172,4 +205,49 @@ func TestVerifyAxisFix(t *testing.T) {
 			t.Logf("Created debug visualization at %s", axesObjPath)
 		})
 	}
+}
+
+// Add this function to your code
+func DebugShooterTargetVectors(shooterData, targetData *types.PlayerTickData) {
+	// Log the original positions and angles
+	slog.Info("Debugging shooter/target vectors",
+		"shooterPos", shooterData.Position,
+		"viewAngleX", shooterData.ViewAngleX,
+		"viewAngleY", shooterData.ViewAngleY,
+		"targetPos", targetData.Position)
+
+	// Calculate and log the actual vector from shooter to target in CS2 coordinates
+	toTarget := targetData.Position.Sub(shooterData.Position).Normalize()
+	slog.Info("Vector calculations",
+		"toTarget", toTarget,
+		"forward", shooterData.ForwardVector())
+
+	// Calculate the angle between the forward vector and the vector to target
+	forward := shooterData.ForwardVector()
+	dotProduct := forward.Dot(toTarget)
+	// Clamp to avoid floating point errors outside [-1, 1]
+	if dotProduct > 1.0 {
+		dotProduct = 1.0
+	} else if dotProduct < -1.0 {
+		dotProduct = -1.0
+	}
+	angleBetween := math.Acos(dotProduct) * (180.0 / math.Pi)
+	slog.Info("Angle between vectors",
+		"degrees", angleBetween)
+
+	// Now check what happens in model space
+	coords := NewDefaultSource2Coordinates()
+	modelShooterPos := coords.CS2ToModelSpace(shooterData.Position)
+	modelTargetPos := coords.CS2ToModelSpace(targetData.Position)
+	modelToTarget := modelTargetPos.Sub(modelShooterPos).Normalize()
+
+	// Two ways to get the model forward vector
+	modelForward1 := coords.CS2ToModelSpace(forward)
+	modelForward2 := coords.ApplyCS2Rotation(shooterData.ViewAngleX, shooterData.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
+
+	slog.Info("Model space vectors",
+		"modelToTarget", modelToTarget,
+		"modelForward1", modelForward1,
+		"modelForward2", modelForward2,
+	)
 }

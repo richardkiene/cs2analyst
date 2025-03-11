@@ -187,7 +187,7 @@ func degToRad(deg float64) float64 {
 //   - ViewAngleX = 90° means facing east (+X)
 //   - ViewAngleY = -90° means looking straight up (+Z)
 //   - ViewAngleY = 90° means looking straight down (-Z)
-func (p *PlayerTickData) ForwardVector() r3.Vector {
+/*func (p *PlayerTickData) ForwardVector() r3.Vector {
 	yawRad := degToRad(float64(p.ViewAngleX))
 	pitchRad := degToRad(float64(p.ViewAngleY))
 	return r3.Vector{
@@ -195,6 +195,19 @@ func (p *PlayerTickData) ForwardVector() r3.Vector {
 		X: math.Sin(yawRad) * math.Cos(pitchRad), // East component
 		Y: math.Cos(yawRad) * math.Cos(pitchRad), // North component
 		Z: -math.Sin(pitchRad),                   // Up/Down component
+	}.Normalize()
+}*/
+
+func (p *PlayerTickData) ForwardVector() r3.Vector {
+	// Convert angles to radians
+	pitchRad := degToRad(float64(p.ViewAngleY)) // This is X in the code (pitch)
+	yawRad := degToRad(float64(p.ViewAngleX))   // This is Y in the code (yaw)
+
+	// Following the Source engine's AngleVectors implementation
+	return r3.Vector{
+		X: math.Cos(pitchRad) * math.Cos(yawRad),
+		Y: math.Cos(pitchRad) * math.Sin(yawRad),
+		Z: -math.Sin(pitchRad),
 	}.Normalize()
 }
 
