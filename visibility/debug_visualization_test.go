@@ -165,6 +165,66 @@ func TestVerifyAxisFix(t *testing.T) {
 				IsCrouched: false,
 			},
 		},
+		{
+			"Unknown_Tick_160327",
+			r3.Vector{
+				X: -1865.9390869140625,
+				Y: -624.790283203125,
+				Z: -167.96875,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1865.9390869140625,
+					Y: -624.790283203125,
+					Z: -167.96875,
+				},
+				ViewAngleX: 101.528076171875,
+				ViewAngleY: -1.093475341796875,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -2182.810546875,
+					Y: 827.809814453125,
+					Z: -123.00994873046875,
+				},
+				ViewAngleX: -101.16519927978516,
+				ViewAngleY: 3.62994384765625,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+		},
+		{
+			"Unknown_Tick_94276",
+			r3.Vector{
+				X: -1865.9390869140625,
+				Y: -624.790283203125,
+				Z: -167.96875,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -111.48406982421875,
+					Y: -1497.803955078125,
+					Z: -53.96875,
+				},
+				ViewAngleX: -134.33016967773438,
+				ViewAngleY: 12.628097534179688,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -519.3766479492188,
+					Y: -1885.4940185546875,
+					Z: -179.96875,
+				},
+				ViewAngleX: -124.2502212524414,
+				ViewAngleY: 0.7326507568359375,
+				IsAlive:    true,
+				IsCrouched: false,
+			},
+		},
 	}
 
 	// Test each position

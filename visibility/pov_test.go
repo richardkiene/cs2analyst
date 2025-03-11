@@ -335,7 +335,92 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			target: types.PlayerTickData{
 				Position: r3.Vector{X: -1585.734130859375, Y: -2191.7490234375, Z: -253.405517578125},
 			},
-			expected: false,
+			expected: true,
+		},
+		/*
+			{
+				"time": "2025-03-10T18:34:17.1545313-07:00",
+				"level": "DEBUG",
+				"msg": "Recorded damage event",
+				"tick": 94276,
+				"shooterSteamID": "76561199214428404",
+				"shooterPosition": {
+					"X": -111.48406982421875,
+					"Y": -1497.803955078125,
+					"Z": -53.96875
+				},
+				"shooterViewAngleX": -134.33016967773438,
+				"shooterViewAngleY": 12.628097534179688,
+				"targetSteamID": "76561199811297728",
+				"targetPosition": {
+					"X": -519.3766479492188,
+					"Y": -1885.4940185546875,
+					"Z": -179.96875
+				},
+				"targetViewAngleX": -124.2502212524414,
+				"targetViewAngleY": 0.7326507568359375
+			}*/
+		{
+			name: "Mirage -- Tick 94276 -- Unknown Vision Failure",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -111.48406982421875,
+					Y: -1497.803955078125,
+					Z: -53.96875,
+				},
+				ViewAngleX: -134.33016967773438,
+				ViewAngleY: 12.628097534179688,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -519.3766479492188,
+					Y: -1885.4940185546875,
+					Z: -179.96875,
+				},
+			},
+			expected: true,
+		},
+		/*{
+			"time": "2025-03-10T18:34:16.9876226-07:00",
+			"level": "DEBUG",
+			"msg": "Recorded damage event",
+			"tick": 160327,
+			"shooterSteamID": "76561199214428404",
+			"shooterPosition": {
+				"X": -1865.9390869140625,
+				"Y": -624.790283203125,
+				"Z": -167.96875
+			},
+			"shooterViewAngleX": 101.528076171875,
+			"shooterViewAngleY": -1.093475341796875,
+			"targetSteamID": "76561198970966860",
+			"targetPosition": {
+				"X": -2182.810546875,
+				"Y": 827.809814453125,
+				"Z": -123.00994873046875
+			},
+			"targetViewAngleX": -101.16519927978516,
+			"targetViewAngleY": 3.62994384765625
+		}*/
+		{
+			name: "Mirage -- Tick 160327-- Unknown Vision Failure",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1865.9390869140625,
+					Y: -624.790283203125,
+					Z: -167.96875,
+				},
+				ViewAngleX: 101.528076171875,
+				ViewAngleY: -1.093475341796875,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -2182.810546875,
+					Y: 827.809814453125,
+					Z: -123.00994873046875,
+				},
+			},
+			expected: true,
 		},
 	}
 

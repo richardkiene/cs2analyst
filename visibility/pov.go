@@ -41,7 +41,8 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 
 	// Generate multiple sample points on the target player's body to check visibility
 	// This accounts for partial visibility cases where only part of the player is visible
-	targetSamplePoints := generateTargetSamplePoints(transformedTargetPos)
+	//targetSamplePoints := generateTargetSamplePoints(transformedTargetPos)
+	targetSamplePoints := generateTargetSamplePointsInModelSpace(transformedTargetPos)
 
 	// Try each sample point until we find one that's visible
 	for i, samplePoint := range targetSamplePoints {
@@ -72,6 +73,53 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 	// None of the sample points were visible
 	slog.Info("Target is not visible - all sample points blocked")
 	return false
+}
+
+func generateTargetSamplePointsInModelSpace(targetModelPos r3.Vector) []r3.Vector {
+	// Standard player dimensions in CS2 units
+	const (
+		playerHeight = 72.0
+		playerWidth  = 32.0
+	)
+
+	// Generate sample points with correct axis orientations
+	// In model space: X is vertical, Y and Z are horizontal
+	samplePoints := []r3.Vector{
+		// Center position (base of model)
+		targetModelPos,
+
+		// Head level (top)
+		{X: targetModelPos.X + playerHeight*0.85, Y: targetModelPos.Y, Z: targetModelPos.Z},
+
+		// Chest level (upper body)
+		{X: targetModelPos.X + playerHeight*0.65, Y: targetModelPos.Y, Z: targetModelPos.Z},
+
+		// Waist level (mid body)
+		{X: targetModelPos.X + playerHeight*0.45, Y: targetModelPos.Y, Z: targetModelPos.Z},
+
+		// Legs (lower body)
+		{X: targetModelPos.X + playerHeight*0.25, Y: targetModelPos.Y, Z: targetModelPos.Z},
+
+		// Right side (at chest height)
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z + playerWidth*0.35},
+
+		// Left side (at chest height)
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z - playerWidth*0.35},
+
+		// Front (at chest height)
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.35, Z: targetModelPos.Z},
+
+		// Back (at chest height)
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.35, Z: targetModelPos.Z},
+
+		// Corners (diagonal offsets) at chest height
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
+		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
+	}
+
+	return samplePoints
 }
 
 // generateTargetSamplePoints creates multiple points on the target player's body
