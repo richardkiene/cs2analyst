@@ -1057,38 +1057,49 @@ func ExportCombinedModelWithVectors(
 				playerWidth  = 32.0
 			)
 
-			// Generate the same sample points as in generateTargetSamplePoints
+			// Generate sample points with correct axis orientations
+			// In model space: X is vertical, Y and Z are horizontal
 			samplePoints := []r3.Vector{
-				// Center position
+				// Center position (base of model)
 				targetModelPos,
 
 				// Head level (top)
-				{X: targetModelPos.X, Y: targetModelPos.Y, Z: targetModelPos.Z + playerHeight*0.85},
+				{X: targetModelPos.X + playerHeight*0.85, Y: targetModelPos.Y, Z: targetModelPos.Z},
 
 				// Chest level (upper body)
-				{X: targetModelPos.X, Y: targetModelPos.Y, Z: targetModelPos.Z + playerHeight*0.65},
+				{X: targetModelPos.X + playerHeight*0.65, Y: targetModelPos.Y, Z: targetModelPos.Z},
 
 				// Waist level (mid body)
-				{X: targetModelPos.X, Y: targetModelPos.Y, Z: targetModelPos.Z + playerHeight*0.45},
+				{X: targetModelPos.X + playerHeight*0.45, Y: targetModelPos.Y, Z: targetModelPos.Z},
 
 				// Legs (lower body)
-				{X: targetModelPos.X, Y: targetModelPos.Y, Z: targetModelPos.Z + playerHeight*0.25},
+				{X: targetModelPos.X + playerHeight*0.25, Y: targetModelPos.Y, Z: targetModelPos.Z},
 
-				// Right side
-				{X: targetModelPos.X + playerWidth*0.35, Y: targetModelPos.Y, Z: targetModelPos.Z + playerHeight*0.6},
-				// Left side
-				{X: targetModelPos.X - playerWidth*0.35, Y: targetModelPos.Y, Z: targetModelPos.Z + playerHeight*0.6},
-				// Front
-				{X: targetModelPos.X, Y: targetModelPos.Y + playerWidth*0.35, Z: targetModelPos.Z + playerHeight*0.6},
-				// Back
-				{X: targetModelPos.X, Y: targetModelPos.Y - playerWidth*0.35, Z: targetModelPos.Z + playerHeight*0.6},
+				// Right side (at chest height)
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z + playerWidth*0.35},
+
+				// Left side (at chest height)
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z - playerWidth*0.35},
+
+				// Front (at chest height)
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.35, Z: targetModelPos.Z},
+
+				// Back (at chest height)
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.35, Z: targetModelPos.Z},
 
 				// Corners (diagonal offsets) at chest height
-				{X: targetModelPos.X + playerWidth*0.3, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z + playerHeight*0.6},
-				{X: targetModelPos.X + playerWidth*0.3, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z + playerHeight*0.6},
-				{X: targetModelPos.X - playerWidth*0.3, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z + playerHeight*0.6},
-				{X: targetModelPos.X - playerWidth*0.3, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z + playerHeight*0.6},
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
+				{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
 			}
+
+			slog.Info("Debug ray traces",
+				"eyePos", modelEyePos,
+				"samplePoint1", samplePoints[1], // Head level
+				"samplePoint3", samplePoints[3], // Waist level
+				"rayVector1", samplePoints[1].Sub(modelEyePos).Normalize(),
+				"rayVector3", samplePoints[3].Sub(modelEyePos).Normalize())
 
 			// Add vertices for each sample point
 			sampleVertexIndices := make([]int, len(samplePoints))
