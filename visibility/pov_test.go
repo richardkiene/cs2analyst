@@ -419,6 +419,8 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 					Y: 827.809814453125,
 					Z: -123.00994873046875,
 				},
+				ViewAngleX: -101.16519927978516,
+				ViewAngleY: 3.62994384765625,
 			},
 			expected: true,
 		},

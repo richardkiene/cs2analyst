@@ -39,10 +39,16 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 		"transformed_eye", transformedEyePos,
 		"transformed_target", transformedTargetPos)
 
+	// Get the shooter's forward vector in model space
+	shooterForward := coords.ApplyCS2Rotation(shooter.ViewAngleX, shooter.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
+
+	// Generate properly aligned sample points on the target player's body
+	targetSamplePoints := generateTargetSamplePointsWithRotation(transformedTargetPos, shooterForward)
+
 	// Generate multiple sample points on the target player's body to check visibility
 	// This accounts for partial visibility cases where only part of the player is visible
 	//targetSamplePoints := generateTargetSamplePoints(transformedTargetPos)
-	targetSamplePoints := generateTargetSamplePointsInModelSpace(transformedTargetPos)
+	//targetSamplePoints := generateTargetSamplePointsInModelSpace(transformedTargetPos)
 
 	// Try each sample point until we find one that's visible
 	for i, samplePoint := range targetSamplePoints {
@@ -73,6 +79,64 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 	// None of the sample points were visible
 	slog.Info("Target is not visible - all sample points blocked")
 	return false
+}
+
+func generateTargetSamplePointsWithRotation(targetPos r3.Vector, forward r3.Vector) []r3.Vector {
+	// Standard player dimensions in model space
+	const (
+		playerHeight = 72.0
+		playerWidth  = 32.0
+	)
+
+	// Calculate up and right vectors based on forward vector
+	// If X is up in model space, we need to adjust the up vector
+	up := r3.Vector{X: 1, Y: 0, Z: 0} // Assuming X is up in model space
+	right := forward.Cross(up).Normalize()
+	if right.Norm() < 0.01 {
+		// If forward is parallel to up, use a different axis
+		right = r3.Vector{X: 0, Y: 0, Z: 1}
+	}
+	// Recalculate up to ensure orthogonality
+	up = right.Cross(forward).Normalize()
+
+	// Generate points at different heights and positions
+	points := []r3.Vector{
+		// Center position (default)
+		targetPos,
+
+		// Head level (top)
+		targetPos.Add(up.Mul(playerHeight * 0.85)),
+
+		// Chest level (upper body)
+		targetPos.Add(up.Mul(playerHeight * 0.65)),
+
+		// Waist level (mid body)
+		targetPos.Add(up.Mul(playerHeight * 0.45)),
+
+		// Legs (lower body)
+		targetPos.Add(up.Mul(playerHeight * 0.25)),
+
+		// Add points with horizontal offsets using right vector
+		// Right side at chest height
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(right.Mul(playerWidth * 0.35)),
+
+		// Left side at chest height
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(right.Mul(playerWidth * 0.35)),
+
+		// Front at chest height (using forward)
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(forward.Mul(playerWidth * 0.35)),
+
+		// Back at chest height (using forward)
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(forward.Mul(playerWidth * 0.35)),
+
+		// Add diagonal points
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(right.Mul(playerWidth * 0.3)).Add(forward.Mul(playerWidth * 0.3)),
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(right.Mul(playerWidth * 0.3)).Sub(forward.Mul(playerWidth * 0.3)),
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(right.Mul(playerWidth * 0.3)).Add(forward.Mul(playerWidth * 0.3)),
+		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(right.Mul(playerWidth * 0.3)).Sub(forward.Mul(playerWidth * 0.3)),
+	}
+
+	return points
 }
 
 func generateTargetSamplePointsInModelSpace(targetModelPos r3.Vector) []r3.Vector {
@@ -212,6 +276,15 @@ func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDis
 
 		// Calculate hit distance for this intersection
 		hitDistance := currentOrigin.Sub(hitPos).Norm()
+
+		// Use a small epsilon (e.g. 0.1) to handle floating point comparisons
+		if hitDistance >= maxDistance-0.1 {
+			slog.Info("Hit is beyond or at target distance, considering target visible",
+				"hitDistance", hitDistance,
+				"maxDistance", maxDistance,
+				"difference", maxDistance-hitDistance)
+			return false // Not blocked - hit is beyond target
+		}
 
 		// Track the material's transparency status
 		materialIsTransparent := material.IsTransparent || material.Opacity < 0.99
