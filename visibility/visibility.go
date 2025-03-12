@@ -430,7 +430,7 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []int {
 	return relevant
 }
 
-// Fixed FindLastContinuousVisibilityStart function for visibility.go
+// Fixed FindLastContinuousVisibilityStart function to properly handle continuous visibility windows
 func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
 	const maxWindowTicks = 320
 	var allowedGap = 64 // maximum number of consecutive ticks where visibility can be missing
@@ -450,16 +450,16 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	// Start from the damage tick minus 1 to avoid the immediate frame
 	startSearchTick := currentTick - 1
 
-	// Track the first continuous visibility window we find
-	firstVisibleTick := -1
-	firstVisibilityWindowStart := -1
-	var firstShooterPos, firstVictimPos r3.Vector
-	var firstTime time.Duration
+	// Track the earliest visible tick in the current window
+	earliestVisibleTick := -1
+	windowStartTick := -1
+	var windowStartShooterPos, windowStartVictimPos r3.Vector
+	var windowStartTime time.Duration
 
 	// Track the current visibility window state
 	gapCount := 0
 	lastVisibleTick := -1
-	continuousVisibilityStart := -1
+	inVisibilityWindow := false
 
 	// Iterate backwards from startSearchTick, but only up to maxWindowTicks
 	for tick := startSearchTick; tick >= 0 && (currentTick-tick) <= maxWindowTicks; tick-- {
@@ -468,7 +468,7 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 				"tick", tick,
 				"gapCount", gapCount,
 				"lastVisibleTick", lastVisibleTick,
-				"continuousVisibilityStart", continuousVisibilityStart)
+				"earliestVisibleTick", earliestVisibleTick)
 		}
 
 		playerData, ok := perTickInfo[tick]
@@ -478,6 +478,8 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 				slog.Debug("No player data for tick", "tick", tick, "gapCount", gapCount)
 			}
 			if gapCount > allowedGap {
+				// If we've exceeded the allowed gap and we were in a visibility window,
+				// we've found our window's start
 				break
 			}
 			continue
@@ -485,13 +487,13 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 
 		shooterTick, ok := playerData[playerID]
 		// If the shooter is blind, don't count it as a gap in visibility
-		if shooterTick.IsBlinded {
+		if ok && shooterTick.IsBlinded {
 			if debugEnabled {
 				slog.Info("Shooter is blinded",
 					"tick", tick,
 					"flashDuration", shooterTick.FlashDuration)
 			}
-			gapCount = 0
+			// This isn't a valid gap since the shooter is blind
 			continue
 		}
 
@@ -525,7 +527,6 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		// Check if the shooter can see the target at this tick
-		// This function now uses coordinate transformation internally
 		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
 
 		if debugEnabled {
@@ -553,25 +554,25 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		if canSeeTarget {
-			// If this is the start of a new visibility window or first visible tick
-			if lastVisibleTick == -1 || (lastVisibleTick-tick) > allowedGap {
+			// If we weren't in a visibility window or if we have a gap larger than allowedGap
+			if !inVisibilityWindow {
 				if debugEnabled {
 					slog.Info("Starting new visibility window",
 						"tick", tick,
 						"lastVisibleTick", lastVisibleTick)
 				}
 
-				// We've found the start of a new visibility window
-				continuousVisibilityStart = tick
-
-				// If this is the first visibility window we've found
-				if firstVisibleTick == -1 {
-					firstVisibleTick = tick
-					firstVisibilityWindowStart = continuousVisibilityStart
-					firstShooterPos = shooterTick.Position
-					firstVictimPos = targetTick.Position
-					firstTime = shooterTick.DemoTime
-				}
+				// Mark the start of a new visibility window
+				inVisibilityWindow = true
+				windowStartTick = tick // This is the start of the window (earliest tick so far)
+				earliestVisibleTick = tick
+				windowStartShooterPos = shooterTick.Position
+				windowStartVictimPos = targetTick.Position
+				windowStartTime = shooterTick.DemoTime
+			} else {
+				// We're continuing an existing visibility window
+				// Update the earliest tick in this window
+				earliestVisibleTick = tick
 			}
 
 			lastVisibleTick = tick
@@ -584,32 +585,32 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 					"gapCount", gapCount)
 			}
 
-			// If we've exceeded the allowed gap, and we've already found a visibility window
-			if gapCount > allowedGap && firstVisibleTick != -1 {
-				// We've found our earliest continuous visibility window, so we can stop searching
+			// If we've exceeded the allowed gap and we were in a visibility window
+			if gapCount > allowedGap && inVisibilityWindow {
+				// We've found our window's start, so we can stop searching
 				break
 			}
 		}
 	}
 
-	// If we found at least one visibility window, return the earliest one
-	if firstVisibleTick != -1 {
+	// If we found a visibility window, return the results
+	if inVisibilityWindow && earliestVisibleTick != -1 {
 		if debugEnabled {
 			slog.Info("About to return visibility result",
 				"playerID", playerID,
 				"targetID", targetID,
-				"firstVisibleTick", firstVisibleTick,
-				"firstVisibilityWindowStart", firstVisibilityWindowStart,
+				"earliestVisibleTick", earliestVisibleTick,
+				"windowStartTick", windowStartTick,
 				"lastVisibleTick", lastVisibleTick,
 				"currentTick", currentTick)
 		}
 
 		return VisibilityResult{
-			StartTick:  firstVisibilityWindowStart,
-			StartTime:  firstTime,
+			StartTick:  earliestVisibleTick, // Return the earliest tick in the window
+			StartTime:  windowStartTime,
 			IsValid:    true,
-			ShooterPos: firstShooterPos,
-			VictimPos:  firstVictimPos,
+			ShooterPos: windowStartShooterPos,
+			VictimPos:  windowStartVictimPos,
 		}, true
 	}
 
