@@ -436,10 +436,10 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	var allowedGap = 64 // maximum number of consecutive ticks where visibility can be missing
 
 	// Only log debug messages if the shooter matches the specified SteamID.
-	debugEnabled := (playerID == 76561199139199601)
+	debugEnabled := playerID == 76561199002420143 && targetID == 76561198237889474
 
 	if debugEnabled {
-		slog.Debug("FindLastContinuousVisibilityStart called",
+		slog.Info("FindLastContinuousVisibilityStart called",
 			"playerID", playerID,
 			"targetID", targetID,
 			"currentTick", currentTick,
@@ -543,6 +543,8 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 			slog.Info("Visibility check",
 				"tick", tick,
 				"canSeeTarget", canSeeTarget,
+				"gapCount", gapCount,
+				"lastVisibleTick", lastVisibleTick,
 				"originalShooterPos", shooterTick.Position,
 				"transformedShooterPos", transformedShooterPos,
 				"eyePos", transformedEyePos,
@@ -593,11 +595,13 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	// If we found at least one visibility window, return the earliest one
 	if firstVisibleTick != -1 {
 		if debugEnabled {
-			slog.Info("Found visibility result",
-				"candidateTick", firstVisibilityWindowStart,
-				"startTime", firstTime,
-				"shooterPos", firstShooterPos,
-				"victimPos", firstVictimPos)
+			slog.Info("About to return visibility result",
+				"playerID", playerID,
+				"targetID", targetID,
+				"firstVisibleTick", firstVisibleTick,
+				"firstVisibilityWindowStart", firstVisibilityWindowStart,
+				"lastVisibleTick", lastVisibleTick,
+				"currentTick", currentTick)
 		}
 
 		return VisibilityResult{
@@ -614,43 +618,6 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 	}
 
 	return VisibilityResult{}, false
-}
-
-// transformReplayToModelSpace transforms replay coordinates to match the coordinate
-// system used in the model space (after GLTF transformation).
-func transformReplayToModelSpace(replayPos r3.Vector, mapModel *MapModel) r3.Vector {
-	// The key problem is that replay data and map geometry are using different coordinate systems.
-	// We need to transform replay positions to match the coordinate system of the map.
-
-	// According to our analysis, for the Source2 engine:
-	// - The replay data uses a different origin point than the map model
-	// - We need to adjust replay coordinates to match the map's coordinate system
-
-	// Based on the logs, this is a simple offset transformation
-	// We can determine this by comparing replay positions with where they should be in the map
-
-	// Calculate a transformation based on known test cases
-	// This is a universal approach, not specific to any map
-	transformedPos := r3.Vector{
-		X: replayPos.X,
-		Y: replayPos.Y,
-		Z: replayPos.Z,
-	}
-
-	// Log the transformation for debugging
-	slog.Debug("Applied universal coordinate transformation",
-		"replayPos", replayPos,
-		"transformedPos", transformedPos)
-
-	return transformedPos
-}
-
-// shouldTransformViewAngles returns true if we need to transform view angles
-// This is a helper function to control view angle transformations
-func shouldTransformViewAngles() bool {
-	// After analysis, we've determined that view angle transformation is not needed
-	// The view angles in the replay data already work correctly with the model space
-	return false
 }
 
 func (m *Model) GetVisibilityPoints() []r3.Vector {
@@ -757,186 +724,6 @@ func degToRad(deg float64) float64 {
 	return deg * math.Pi / 180.0
 }
 
-// rotateAroundZ rotates a 3D vector around the Z axis by the given angle (in radians).
-func rotateAroundZ(v r3.Vector, angle float64) r3.Vector {
-	cosTheta := math.Cos(angle)
-	sinTheta := math.Sin(angle)
-	return r3.Vector{
-		X: v.X*cosTheta - v.Y*sinTheta,
-		Y: v.X*sinTheta + v.Y*cosTheta,
-		Z: v.Z, // The Z component remains the same.
-	}
-}
-
-// getCandidateWorldPoint computes a candidate world point for the target’s hitbox.
-// Instead of rotating by the target’s yaw, we rotate by the shooter’s yaw so that
-// the candidate point is expressed in the same frame of reference as the shooter’s view.
-/*func getCandidateWorldPoint(shooter, target types.PlayerTickData, bp r3.Vector) r3.Vector {
-	// Use a vertical offset (e.g. approximating the target’s waist)
-	verticalOffset := 72.0 / 2 // The waist? https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive/Mapper%27s_Reference
-	targetCenter := target.Position.Add(r3.Vector{X: 0, Y: 0, Z: verticalOffset})
-
-	// Use the shooter’s view angle for rotation
-	yawRad := degToRad(float64(shooter.ViewAngleX))
-	rotatedOffset := rotateAroundZ(bp, yawRad)
-
-	return targetCenter.Add(rotatedOffset)
-}*/
-
-// getCandidateWorldPoint computes a candidate world point for the target's hitbox
-// by transforming a local model point into world space relative to the target's position.
-func getCandidateWorldPoint(shooter, target types.PlayerTickData, modelPoint r3.Vector) r3.Vector {
-	// For testing purposes, we want to ensure that any vertical offset is relative
-	// to the target's feet position, and we maintain proper horizontal positioning
-	return r3.Vector{
-		X: target.Position.X + modelPoint.X,
-		Y: target.Position.Y + modelPoint.Y,
-		Z: target.Position.Z + modelPoint.Z,
-	}
-}
-
-// CanSeeTarget checks if 'shooter' can see 'target' using line-of-sight from the shooter's eye.
-func CanSeeTarget(shooter, target types.PlayerTickData, playerModel *Model, mapModel *MapModel, tick int) (bool, []r3.Vector, *VisibilityDebugInfo) {
-	var hitPoints []r3.Vector
-	debugEnabled := (shooter.SteamID == 76561199139199601)
-	debugInfo := &VisibilityDebugInfo{
-		RayIntersections: make([]r3.Vector, 0),
-		FOVCheckResults:  make([]FOVCheckResult, 0),
-		MarginResults:    make([]MarginResult, 0),
-	}
-
-	// Compute the shooter's eye position
-	eyePos := GetEyePosition(shooter)
-
-	if debugEnabled {
-		slog.Info("CanSeeTarget check",
-			"tick", tick,
-			"shooterSteamID", shooter.SteamID,
-			"targetSteamID", target.SteamID,
-			"eyePos", eyePos,
-			"targetPos", target.Position)
-	}
-
-	// Get candidate visibility points
-	points := playerModel.GetVisibilityPoints()
-
-	anyInFOV := false
-	for i, bp := range points {
-		wp := getCandidateWorldPoint(shooter, target, bp)
-		// Use a more generous FOV check for visibility
-		inFOV := shooter.IsPartiallyVisible(wp, eyePos, 5.0) // Add 5 degrees of slack
-		if debugEnabled {
-			slog.Info("FOV check for point",
-				"pointIndex", i,
-				"worldPoint", wp,
-				"inFOV", inFOV)
-			// Calculate angles for debugging
-			toTarget := wp.Sub(eyePos).Normalize()
-			forward := shooter.ForwardVector()
-
-			horizontalAngle := calculateHorizontalAngle(forward, toTarget)
-			verticalAngle := calculateVerticalAngle(forward, toTarget)
-
-			debugInfo.FOVCheckResults = append(debugInfo.FOVCheckResults, FOVCheckResult{
-				CandidatePoint:  wp,
-				InFOV:           inFOV,
-				HorizontalAngle: horizontalAngle,
-				VerticalAngle:   verticalAngle,
-			})
-		}
-		if inFOV {
-			anyInFOV = true
-			break
-		}
-	}
-
-	if !anyInFOV {
-		if debugEnabled {
-			slog.Info("No points in FOV, failing visibility check")
-		}
-
-		return false, hitPoints, debugInfo
-	}
-
-	// Initialize LOS stats if needed
-	var losStats *LosStats
-	shooterOfInterest := uint64(76561198237889474)
-	if shooter.SteamID == shooterOfInterest {
-		losStats = NewLosStats()
-	}
-
-	// More generous tolerances for visibility testing
-	const (
-		minMargin     = -2.0 // Reduced from 5.0 > 2.0 > -2.0
-		baseTolerance = 0.02 // 2% base tolerance
-		minTolerance  = 1.0  // Minimum 1 unit tolerance
-	)
-
-	// Check each candidate point
-	for _, bp := range points {
-		wp := getCandidateWorldPoint(shooter, target, bp)
-		rayDir := wp.Sub(eyePos).Normalize()
-		distToCandidate := wp.Sub(eyePos).Norm()
-
-		// Adaptive tolerance based on distance
-		tolerance := math.Max(distToCandidate*baseTolerance, minTolerance)
-
-		// NEW: Use partial geometry approach
-		geometry := mapModel.BaseModel.GetRelevantMapGeometry(eyePos, wp)
-		var hitFound bool
-		var hitT float64
-
-		// We’ll keep track of the closest intersection, if any
-		closest := math.MaxFloat64
-		for _, tri := range geometry {
-			// Intersect the ray with 'tri'
-			if t, ok := RayIntersectsTriangle(eyePos, rayDir, mapModel.BaseModel.triangles[tri]); ok && t < closest {
-				closest = t
-				hitFound = true
-			}
-		}
-
-		// Record hit points for visualization
-		if hitFound {
-			hitPoint := eyePos.Add(rayDir.Mul(hitT))
-			hitPoints = append(hitPoints, hitPoint)
-			debugInfo.RayIntersections = append(debugInfo.RayIntersections, hitPoint)
-		}
-
-		// Calculate visibility margin
-		margin := math.MaxFloat64
-		if hitFound {
-			// If hit is behind target (with tolerance), consider it visible
-			margin = distToCandidate - hitT
-			if margin < 0 {
-				// Hit is in front of target, apply tolerance to see if it's close enough
-				margin = (hitT + tolerance) - distToCandidate
-			}
-		}
-
-		if debugEnabled {
-			debugInfo.MarginResults = append(debugInfo.MarginResults, MarginResult{
-				Point:       wp,
-				Margin:      margin,
-				Tolerance:   tolerance,
-				HitFound:    hitFound,
-				HitDistance: hitT,
-			})
-		}
-
-		// Visibility check with relaxed constraints
-		if !hitFound || margin > -minMargin { // Allow slightly negative margins
-			if shooter.SteamID == shooterOfInterest {
-				losStats.UpdateLosStats(margin, tolerance)
-			}
-
-			return true, hitPoints, debugInfo
-		}
-	}
-
-	return false, hitPoints, debugInfo
-}
-
 // RayIntersectsTriangle returns (t, true) if the ray from rayStart in the direction rayDir
 // intersects the triangle tri at distance t along the ray. Returns (0, false) if no intersection.
 func RayIntersectsTriangle(rayStart, rayDir r3.Vector, tri types.Triangle) (float64, bool) {
@@ -969,41 +756,6 @@ func RayIntersectsTriangle(rayStart, rayDir r3.Vector, tri types.Triangle) (floa
 	return 0, false
 }
 
-func calculateHorizontalAngle(forward, toTarget r3.Vector) float64 {
-	forwardHorizontal := r3.Vector{
-		X: forward.X,
-		Y: forward.Y,
-		Z: 0,
-	}.Normalize()
-
-	toTargetHorizontal := r3.Vector{
-		X: toTarget.X,
-		Y: toTarget.Y,
-		Z: 0,
-	}.Normalize()
-
-	dot := forwardHorizontal.Dot(toTargetHorizontal)
-	if dot > 1.0 {
-		dot = 1.0
-	} else if dot < -1.0 {
-		dot = -1.0
-	}
-	return math.Acos(dot) * (180 / math.Pi)
-}
-
-func calculateVerticalAngle(forward, toTarget r3.Vector) float64 {
-	right := forward.Cross(r3.Vector{X: 0, Y: 0, Z: 1}).Normalize()
-	projectedToTarget := toTarget.Sub(right.Mul(toTarget.Dot(right))).Normalize()
-
-	dot := forward.Dot(projectedToTarget)
-	if dot > 1.0 {
-		dot = 1.0
-	} else if dot < -1.0 {
-		dot = -1.0
-	}
-	return math.Acos(dot) * (180 / math.Pi)
-}
-
 // NewAABBFromTriangle computes an AABB for a triangle.
 func NewAABBFromTriangle(tri types.Triangle) AABB {
 	min := r3.Vector{
@@ -1017,22 +769,6 @@ func NewAABBFromTriangle(tri types.Triangle) AABB {
 		Z: math.Max(tri.V1.Z, math.Max(tri.V2.Z, tri.V3.Z)),
 	}
 	return AABB{Min: min, Max: max}
-}
-
-// unionAABB returns the smallest AABB that encloses both a and b.
-func unionAABB(a, b AABB) AABB {
-	return AABB{
-		Min: r3.Vector{
-			X: math.Min(a.Min.X, b.Min.X),
-			Y: math.Min(a.Min.Y, b.Min.Y),
-			Z: math.Min(a.Min.Z, b.Min.Z),
-		},
-		Max: r3.Vector{
-			X: math.Max(a.Max.X, b.Max.X),
-			Y: math.Max(a.Max.Y, b.Max.Y),
-			Z: math.Max(a.Max.Z, b.Max.Z),
-		},
-	}
 }
 
 // IntersectRay tests whether the ray (origin, dir) intersects the AABB
@@ -1237,20 +973,4 @@ func rayIntersectsTriangle(origin, direction r3.Vector, tri types.Triangle) bool
 
 	dist := f * edge2.Dot(q)
 	return dist > EPSILON
-}
-
-func minVector(a, b r3.Vector) r3.Vector {
-	return r3.Vector{
-		X: math.Min(a.X, b.X),
-		Y: math.Min(a.Y, b.Y),
-		Z: math.Min(a.Z, b.Z),
-	}
-}
-
-func maxVector(a, b r3.Vector) r3.Vector {
-	return r3.Vector{
-		X: math.Max(a.X, b.X),
-		Y: math.Max(a.Y, b.Y),
-		Z: math.Max(a.Z, b.Z),
-	}
 }

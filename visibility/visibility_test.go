@@ -263,66 +263,6 @@ func TestRotationConsistency(t *testing.T) {
 	}
 }
 
-// TestCanSeeTargetCoordinateSystem verifies that CanSeeTarget respects Source2's coordinate system
-func TestCanSeeTargetCoordinateSystem(t *testing.T) {
-	// Create test models
-	playerModel := CreateTestPlayerModel()
-	mapModel := createVisTestMapModel()
-
-	tests := []struct {
-		name    string
-		shooter types.PlayerTickData
-		target  types.PlayerTickData
-		wantSee bool
-		desc    string
-	}{
-		{
-			name: "Clear line of sight along X axis",
-			shooter: types.PlayerTickData{
-				Position:   r3.Vector{X: 0, Y: 0, Z: 64}, // Standing height
-				ViewAngleX: 90,                           // Looking east
-				ViewAngleY: 0,
-				IsAlive:    true,
-			},
-			target: types.PlayerTickData{
-				Position: r3.Vector{X: 100, Y: 0, Z: 64},
-				IsAlive:  true,
-			},
-			wantSee: true,
-			desc:    "Should see target when looking east with no obstacles",
-		},
-		{
-			name: "Clear line of sight along Y axis",
-			shooter: types.PlayerTickData{
-				Position:   r3.Vector{X: 0, Y: 0, Z: 64},
-				ViewAngleX: 0, // Looking north
-				ViewAngleY: 0,
-				IsAlive:    true,
-			},
-			target: types.PlayerTickData{
-				Position: r3.Vector{X: 0, Y: 100, Z: 64},
-				IsAlive:  true,
-			},
-			wantSee: true,
-			desc:    "Should see target when looking north with no obstacles",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			canSee, hitPoints, _ := CanSeeTarget(tt.shooter, tt.target, playerModel, mapModel, 0)
-			assert.Equal(t, tt.wantSee, canSee, tt.desc)
-
-			if !canSee {
-				// Verify that any hit points respect the coordinate system
-				for _, hitPoint := range hitPoints {
-					validateCoordinatePoint(t, hitPoint)
-				}
-			}
-		})
-	}
-}
-
 // TestGetEyePositionHeight ensures eye height calculations match Source2 conventions
 func TestGetEyePositionHeight(t *testing.T) {
 	tests := []struct {

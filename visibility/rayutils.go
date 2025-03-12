@@ -83,9 +83,9 @@ func GenerateTargetSamplePoints(targetPos r3.Vector, forward r3.Vector) []r3.Vec
 
 // CastRayToTarget casts a ray from origin to target and checks for intersections
 // This unified function can be used by both ray casting and visualization
-func CastRayToTarget(origin, direction r3.Vector, node *BVHNode, maxDistance float64) (bool, r3.Vector, MaterialProperties) {
+func CastRayToTarget(origin, direction r3.Vector, node *BVHNode, maxDistance float64, debugEnabled bool) (bool, r3.Vector, MaterialProperties) {
 	hitPos := r3.Vector{}
-	blocked, material, _ := rayIntersectsBVHClosestHit(origin, direction, node, &hitPos, maxDistance)
+	blocked, material, _ := rayIntersectsBVHClosestHit(origin, direction, node, &hitPos, maxDistance, debugEnabled)
 
 	return blocked, hitPos, material
 }

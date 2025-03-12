@@ -135,41 +135,6 @@ func (sc *Source2Coordinates) ApplyCS2Rotation(viewAngleX, viewAngleY float32, d
 	}
 }
 
-// TODO: OLD AND MAYBE BUSTED
-/*func (sc *Source2Coordinates) ApplyCS2Rotation(viewAngleX, viewAngleY float32, direction r3.Vector) r3.Vector {
-	// Convert angles to radians
-	yawRad := float64(viewAngleX) * math.Pi / 180.0
-	pitchRad := float64(viewAngleY) * math.Pi / 180.0
-
-	// Calculate forward vector using same logic as player.ForwardVector
-	forward := r3.Vector{
-		X: math.Sin(yawRad) * math.Cos(pitchRad),
-		Y: math.Cos(yawRad) * math.Cos(pitchRad),
-		Z: -math.Sin(pitchRad),
-	}
-
-	// Apply coordinate transformation
-	return sc.CS2ToModelSpace(forward)
-}*/
-
-// transformPlayerTickToModelSpace transforms a PlayerTickData to match the coordinate
-// system used by the map model (after GLTF transformation)
-func transformPlayerTickToModelSpace(player types.PlayerTickData, mapModel *MapModel) types.PlayerTickData {
-	// Create a copy of the player data to avoid modifying the original
-	transformedPlayer := player
-
-	// Create a coordinate transformer
-	coords := NewDefaultSource2Coordinates()
-
-	// Transform the position using our coordinate transformer
-	transformedPlayer.Position = coords.CS2ToModelSpace(player.Position)
-
-	// No need to transform view angles as we're handling them separately
-	// in IsShooterPointingAtTarget
-
-	return transformedPlayer
-}
-
 // GetAdjustedEyePosition calculates the eye position based on the player's position and height
 func GetAdjustedEyePosition(shooter types.PlayerTickData, playerModel *Model, mapModel *MapModel) r3.Vector {
 	// Standard CS2 eye heights in game units

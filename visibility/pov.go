@@ -3,13 +3,14 @@ package visibility
 import (
 	"log/slog"
 	"math"
-	"strings"
 
 	"github.com/golang/geo/r3"
 	"github.com/richardkiene/cs2analyst/types"
 )
 
 func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel) bool {
+	debugEnabled := shooter.SteamID == 76561199002420143 && target.SteamID == 76561198237889474
+
 	// Use the shared eye position function
 	eyePos := GetEyePosition(shooter)
 
@@ -18,11 +19,13 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 	transformedEyePos := coords.CS2ToModelSpace(eyePos)
 	transformedTargetPos := coords.CS2ToModelSpace(target.Position)
 
-	slog.Info("Checking visibility from shooter to target",
-		"shooter_position", shooter.Position,
-		"target_position", target.Position,
-		"transformed_eye", transformedEyePos,
-		"transformed_target", transformedTargetPos)
+	if debugEnabled {
+		slog.Info("Checking visibility from shooter to target",
+			"shooter_position", shooter.Position,
+			"target_position", target.Position,
+			"transformed_eye", transformedEyePos,
+			"transformed_target", transformedTargetPos)
+	}
 
 	// Get the shooter's forward vector in model space
 	shooterForward := coords.ApplyCS2Rotation(shooter.ViewAngleX, shooter.ViewAngleY, r3.Vector{X: 1, Y: 0, Z: 0})
@@ -36,14 +39,16 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 		dirToSample := samplePoint.Sub(transformedEyePos).Normalize()
 		distance := transformedEyePos.Sub(samplePoint).Norm()
 
-		slog.Info("Checking sample point",
-			"index", i,
-			"position", samplePoint,
-			"direction", dirToSample,
-			"distance", distance)
+		if debugEnabled {
+			slog.Info("Checking sample point",
+				"index", i,
+				"position", samplePoint,
+				"direction", dirToSample,
+				"distance", distance)
+		}
 
 		// Use the shared ray casting function
-		blocked, hitPos, material := CastRayToTarget(transformedEyePos, dirToSample, mapModel.BaseModel.bvh, distance*1.1)
+		blocked, hitPos, material := CastRayToTarget(transformedEyePos, dirToSample, mapModel.BaseModel.bvh, distance*1.1, debugEnabled)
 
 		if blocked {
 			hitDistance := transformedEyePos.Sub(hitPos).Norm()
@@ -52,311 +57,48 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 			const distanceEpsilon = 0.1
 			if math.Abs(hitDistance-distance) <= distanceEpsilon {
 				// Hit is exactly at target distance (within epsilon)
-				slog.Info("Ray hit exactly at target distance, considering visible",
-					"hitDistance", hitDistance,
-					"targetDistance", distance,
-					"difference", math.Abs(hitDistance-distance))
+				if debugEnabled {
+					slog.Info("Ray hit exactly at target distance, considering visible",
+						"hitDistance", hitDistance,
+						"targetDistance", distance,
+						"difference", math.Abs(hitDistance-distance))
+				}
 				return true
 			}
 
 			// Check if hit is beyond target (this shouldn't happen with precise ray casting)
 			if hitDistance > distance+distanceEpsilon {
-				slog.Info("Hit is beyond target, target is visible",
-					"hitDistance", hitDistance,
-					"targetDistance", distance,
-					"difference", hitDistance-distance)
+				if debugEnabled {
+					slog.Info("Hit is beyond target, target is visible",
+						"hitDistance", hitDistance,
+						"targetDistance", distance,
+						"difference", hitDistance-distance)
+				}
 				return true
 			}
 
-			slog.Info("Ray blocked by material",
-				"material", material.Name,
-				"hitDistance", hitDistance,
-				"targetDistance", distance,
-				"hitPos", hitPos)
+			if debugEnabled {
+				slog.Info("Ray blocked by material",
+					"material", material.Name,
+					"hitDistance", hitDistance,
+					"targetDistance", distance,
+					"hitPos", hitPos)
+			}
 		} else {
-			// No blocking!
-			slog.Info("Target is visible via sample point", "index", i, "position", samplePoint)
+			if debugEnabled {
+				// No blocking!
+				slog.Info("Target is visible via sample point", "index", i, "position", samplePoint)
+			}
 			return true
 		}
 	}
 
 	// None of the sample points were visible
-	slog.Info("Target is not visible - all sample points blocked")
+	if debugEnabled {
+		slog.Info("Target is not visible - all sample points blocked")
+	}
+
 	return false
-}
-
-func generateTargetSamplePointsWithRotation(targetPos r3.Vector, forward r3.Vector) []r3.Vector {
-	// Standard player dimensions in model space
-	const (
-		playerHeight = 72.0
-		playerWidth  = 32.0
-	)
-
-	// Calculate up and right vectors based on forward vector
-	// If X is up in model space, we need to adjust the up vector
-	up := r3.Vector{X: 1, Y: 0, Z: 0} // Assuming X is up in model space
-	right := forward.Cross(up).Normalize()
-	if right.Norm() < 0.01 {
-		// If forward is parallel to up, use a different axis
-		right = r3.Vector{X: 0, Y: 0, Z: 1}
-	}
-	// Recalculate up to ensure orthogonality
-	up = right.Cross(forward).Normalize()
-
-	// Generate points at different heights and positions
-	points := []r3.Vector{
-		// Center position (default)
-		targetPos,
-
-		// Head level (top)
-		targetPos.Add(up.Mul(playerHeight * 0.85)),
-
-		// Chest level (upper body)
-		targetPos.Add(up.Mul(playerHeight * 0.65)),
-
-		// Waist level (mid body)
-		targetPos.Add(up.Mul(playerHeight * 0.45)),
-
-		// Legs (lower body)
-		targetPos.Add(up.Mul(playerHeight * 0.25)),
-
-		// Add points with horizontal offsets using right vector
-		// Right side at chest height
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(right.Mul(playerWidth * 0.35)),
-
-		// Left side at chest height
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(right.Mul(playerWidth * 0.35)),
-
-		// Front at chest height (using forward)
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(forward.Mul(playerWidth * 0.35)),
-
-		// Back at chest height (using forward)
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(forward.Mul(playerWidth * 0.35)),
-
-		// Add diagonal points
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(right.Mul(playerWidth * 0.3)).Add(forward.Mul(playerWidth * 0.3)),
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Add(right.Mul(playerWidth * 0.3)).Sub(forward.Mul(playerWidth * 0.3)),
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(right.Mul(playerWidth * 0.3)).Add(forward.Mul(playerWidth * 0.3)),
-		targetPos.Add(up.Mul(playerHeight * 0.6)).Sub(right.Mul(playerWidth * 0.3)).Sub(forward.Mul(playerWidth * 0.3)),
-	}
-
-	return points
-}
-
-func generateTargetSamplePointsInModelSpace(targetModelPos r3.Vector) []r3.Vector {
-	// Standard player dimensions in CS2 units
-	const (
-		playerHeight = 72.0
-		playerWidth  = 32.0
-	)
-
-	// Generate sample points with correct axis orientations
-	// In model space: X is vertical, Y and Z are horizontal
-	samplePoints := []r3.Vector{
-		// Center position (base of model)
-		targetModelPos,
-
-		// Head level (top)
-		{X: targetModelPos.X + playerHeight*0.85, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-		// Chest level (upper body)
-		{X: targetModelPos.X + playerHeight*0.65, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-		// Waist level (mid body)
-		{X: targetModelPos.X + playerHeight*0.45, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-		// Legs (lower body)
-		{X: targetModelPos.X + playerHeight*0.25, Y: targetModelPos.Y, Z: targetModelPos.Z},
-
-		// Right side (at chest height)
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z + playerWidth*0.35},
-
-		// Left side (at chest height)
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y, Z: targetModelPos.Z - playerWidth*0.35},
-
-		// Front (at chest height)
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.35, Z: targetModelPos.Z},
-
-		// Back (at chest height)
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.35, Z: targetModelPos.Z},
-
-		// Corners (diagonal offsets) at chest height
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z + playerWidth*0.3},
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y + playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
-		{X: targetModelPos.X + playerHeight*0.6, Y: targetModelPos.Y - playerWidth*0.3, Z: targetModelPos.Z - playerWidth*0.3},
-	}
-
-	return samplePoints
-}
-
-// generateTargetSamplePoints creates multiple points on the target player's body
-// to check visibility from different angles. This is crucial for partial visibility.
-func generateTargetSamplePoints(targetPos r3.Vector) []r3.Vector {
-	// Standard player dimensions in CS2 units
-	const (
-		playerHeight = 72.0
-		playerWidth  = 32.0
-	)
-
-	// Generate points at different heights and positions
-	points := []r3.Vector{
-		// Center position (default)
-		targetPos,
-
-		// Head level (top)
-		{X: targetPos.X, Y: targetPos.Y, Z: targetPos.Z + playerHeight*0.85},
-
-		// Chest level (upper body)
-		{X: targetPos.X, Y: targetPos.Y, Z: targetPos.Z + playerHeight*0.65},
-
-		// Waist level (mid body)
-		{X: targetPos.X, Y: targetPos.Y, Z: targetPos.Z + playerHeight*0.45},
-
-		// Legs (lower body)
-		{X: targetPos.X, Y: targetPos.Y, Z: targetPos.Z + playerHeight*0.25},
-
-		// Add points with horizontal offsets to catch side visibility
-		// Right side
-		{X: targetPos.X + playerWidth*0.35, Y: targetPos.Y, Z: targetPos.Z + playerHeight*0.6},
-		// Left side
-		{X: targetPos.X - playerWidth*0.35, Y: targetPos.Y, Z: targetPos.Z + playerHeight*0.6},
-		// Front
-		{X: targetPos.X, Y: targetPos.Y + playerWidth*0.35, Z: targetPos.Z + playerHeight*0.6},
-		// Back
-		{X: targetPos.X, Y: targetPos.Y - playerWidth*0.35, Z: targetPos.Z + playerHeight*0.6},
-
-		// Corners (diagonal offsets) at chest height
-		{X: targetPos.X + playerWidth*0.3, Y: targetPos.Y + playerWidth*0.3, Z: targetPos.Z + playerHeight*0.6},
-		{X: targetPos.X + playerWidth*0.3, Y: targetPos.Y - playerWidth*0.3, Z: targetPos.Z + playerHeight*0.6},
-		{X: targetPos.X - playerWidth*0.3, Y: targetPos.Y + playerWidth*0.3, Z: targetPos.Z + playerHeight*0.6},
-		{X: targetPos.X - playerWidth*0.3, Y: targetPos.Y - playerWidth*0.3, Z: targetPos.Z + playerHeight*0.6},
-	}
-
-	return points
-}
-
-// checkRayWithTransparency checks if a ray is blocked by non-transparent objects
-// checkRayWithTransparency checks if a ray is blocked by non-transparent objects
-func checkRayWithTransparency(origin, direction r3.Vector, node *BVHNode, maxDistance float64) bool {
-	if node == nil {
-		return false // No node, no blocking
-	}
-
-	slog.Info("Checking ray with transparency",
-		"origin", origin,
-		"direction", direction,
-		"maxDistance", maxDistance)
-
-	// Initialize variables for tracking hit information
-	currentOrigin := origin
-	remainingDistance := maxDistance
-
-	// Debug counters
-	hitCount := 0
-	transparentHitCount := 0
-
-	// Names of materials hit during ray casting
-	materialsHit := make([]string, 0)
-
-	// Continue tracing the ray through transparent objects
-	for {
-		hitPos := r3.Vector{}
-		blocked, material, triangleIndex := rayIntersectsBVHClosestHit(currentOrigin, direction, node, &hitPos, remainingDistance)
-
-		hitCount++
-
-		// If no hit or hit is beyond our range, we're done
-		if !blocked {
-			slog.Info("Ray passed through scene without hitting anything",
-				"hitCount", hitCount,
-				"transparentHits", transparentHitCount,
-				"materialsHit", materialsHit)
-			return false // No blocking
-		}
-
-		// Track materials hit
-		materialsHit = append(materialsHit, material.Name)
-
-		// Calculate hit distance for this intersection
-		hitDistance := currentOrigin.Sub(hitPos).Norm()
-
-		// Check if hit is *exactly* at target distance (within epsilon)
-		// This is more precise than the percentage-based check
-		const distanceEpsilon = 0.1 // Small value for floating point precision
-		if math.Abs(hitDistance-maxDistance) <= distanceEpsilon {
-			slog.Info("Hit is at exact target distance (within epsilon), considering target visible",
-				"materialName", material.Name,
-				"hitDistance", hitDistance,
-				"maxDistance", maxDistance,
-				"difference", math.Abs(hitDistance-maxDistance))
-			return false // No blocking - hit is the target itself
-		}
-
-		// Track the material's transparency status
-		materialIsTransparent := material.IsTransparent || material.Opacity < 0.99
-
-		// Special handling for the window bars - we know from the debug that this is a transparent material
-		// This checks if the material name contains "fence" or "grate" in a case-insensitive way
-		if strings.Contains(strings.ToLower(material.Name), "fence") ||
-			strings.Contains(strings.ToLower(material.Name), "grate") {
-			materialIsTransparent = true
-		}
-
-		if materialIsTransparent {
-			transparentHitCount++
-			slog.Info("Hit transparent material",
-				"materialName", material.Name,
-				"opacity", material.Opacity,
-				"hitPos", hitPos,
-				"hitDistance", hitDistance,
-				"triangleIndex", triangleIndex)
-
-			// Adjust the remaining distance and move the origin forward
-			remainingDistance -= hitDistance
-			if remainingDistance <= 0 {
-				slog.Info("Reached maximum distance after transparent hits",
-					"transparentHits", transparentHitCount,
-					"hitCount", hitCount)
-				return false // Reached maximum distance
-			}
-
-			// Move slightly beyond the hit point to avoid self-intersection
-			const epsilon = 0.001
-			currentOrigin = hitPos.Add(direction.Mul(epsilon))
-
-			// Continue the loop to check for the next hit
-			continue
-		}
-
-		// For curbs001 specifically, if we're close to the target, we might want to
-		// consider it as not blocking the view as it could just be the ground
-		// This is still general as it checks the distance to the target
-		if (material.Name == "curbs001" || material.Name == "floor") && hitDistance > (maxDistance*0.9) {
-			// We're very close to the target at this point, and hit what's likely the ground
-			// It's possible the target is just standing on this surface
-			slog.Info("Hit ground material near target, considering as non-blocking",
-				"materialName", material.Name,
-				"hitDistance", hitDistance,
-				"maxDistance", maxDistance,
-				"percentOfMax", (hitDistance/maxDistance)*100)
-			return false
-		}
-
-		slog.Info("Hit opaque material, ray blocked",
-			"materialName", material.Name,
-			"opacity", material.Opacity,
-			"hitPos", hitPos,
-			"hitDistance", hitDistance,
-			"distanceRatio", hitDistance/maxDistance,
-			"totalHits", hitCount,
-			"transparentHits", transparentHitCount,
-			"triangleIndex", triangleIndex,
-			"allMaterialsHit", materialsHit)
-
-		// Found a non-transparent blocking object
-		return true
-	}
 }
 
 // rayIntersectsBVHClosestHit ensures the closest intersection is returned, avoiding false positives from distant objects
@@ -366,6 +108,7 @@ func rayIntersectsBVHClosestHit(
 	node *BVHNode,
 	hitPosition *r3.Vector,
 	maxDistance float64,
+	debugEnabled bool,
 ) (bool, MaterialProperties, int) {
 	if node == nil {
 		return false, MaterialProperties{}, -1
@@ -413,7 +156,7 @@ func rayIntersectsBVHClosestHit(
 	// We need to track which side gave the closer intersection
 	leftPos := r3.Vector{}
 	leftHit, leftMat, leftIdx :=
-		rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.left, &leftPos, maxDistance)
+		rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.left, &leftPos, maxDistance, debugEnabled)
 	leftDist := math.MaxFloat64
 	if leftHit {
 		leftDist = rayOrigin.Sub(leftPos).Norm()
@@ -421,7 +164,7 @@ func rayIntersectsBVHClosestHit(
 
 	rightPos := r3.Vector{}
 	rightHit, rightMat, rightIdx :=
-		rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.right, &rightPos, maxDistance)
+		rayIntersectsBVHClosestHit(rayOrigin, rayDir, node.right, &rightPos, maxDistance, debugEnabled)
 	rightDist := math.MaxFloat64
 	if rightHit {
 		rightDist = rayOrigin.Sub(rightPos).Norm()
@@ -433,7 +176,7 @@ func rayIntersectsBVHClosestHit(
 		*hitPosition = leftPos
 
 		// The final intersection is from the left side
-		slog.Info("Collision found",
+		slog.Debug("Collision found",
 			"triangleIndex", leftIdx,
 			"materialName", leftMat.Name,
 			"materialOpacity", leftMat.Opacity,
@@ -448,7 +191,7 @@ func rayIntersectsBVHClosestHit(
 		*hitPosition = rightPos
 
 		// The final intersection is from the right side
-		slog.Info("Collision found",
+		slog.Debug("Collision found",
 			"triangleIndex", rightIdx,
 			"materialName", rightMat.Name,
 			"materialOpacity", rightMat.Opacity,
