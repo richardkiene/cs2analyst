@@ -593,16 +593,20 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 	}
 
+	if debugEnabled {
+		slog.Info("About to return visibility result",
+			"playerID", playerID,
+			"targetID", targetID,
+			"earliestVisibleTick", earliestVisibleTick,
+			"windowStartTick", windowStartTick,
+			"lastVisibleTick", lastVisibleTick,
+			"currentTick", currentTick)
+	}
+
 	// If we found a visibility window, return the results
 	if inVisibilityWindow && earliestVisibleTick != -1 {
 		if debugEnabled {
-			slog.Info("About to return visibility result",
-				"playerID", playerID,
-				"targetID", targetID,
-				"earliestVisibleTick", earliestVisibleTick,
-				"windowStartTick", windowStartTick,
-				"lastVisibleTick", lastVisibleTick,
-				"currentTick", currentTick)
+			slog.Info("Continuous visibility found")
 		}
 
 		return VisibilityResult{

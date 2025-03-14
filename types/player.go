@@ -22,6 +22,7 @@ type DamageDealt struct {
 	BulletsHit      int       // Number of bullets that hit
 	AimPunchAngle   r3.Vector // Aim punch when damage was dealt
 	DamageDirection r3.Vector // Direction the damage came from
+	IsBulletDamage  bool
 }
 
 type GrenadeData struct {

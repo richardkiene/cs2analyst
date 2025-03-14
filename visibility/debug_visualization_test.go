@@ -103,7 +103,6 @@ func TestVerifyAxisFix(t *testing.T) {
 	// Define test positions
 	positions := []struct {
 		name        string
-		pos         r3.Vector
 		shooterData types.PlayerTickData
 		targetData  types.PlayerTickData
 	}{
@@ -115,11 +114,6 @@ func TestVerifyAxisFix(t *testing.T) {
 		{"B_Arches", r3.Vector{X: -1515.4642333984375, Y: 216.43341064453125, Z: -166.96875}, types.PlayerTickData{}, types.PlayerTickData{}},*/
 		{
 			"B_Apps",
-			r3.Vector{
-				X: -1652.548828125,
-				Y: 746.81103515625,
-				Z: -47.96875,
-			},
 			types.PlayerTickData{
 				Position:   r3.Vector{X: -1652.548828125, Y: 746.81103515625, Z: -47.96875},
 				ViewAngleX: -75.15026092529297,
@@ -137,11 +131,6 @@ func TestVerifyAxisFix(t *testing.T) {
 		},
 		{
 			"CT_To_Ticket_Tick_29290_shooter",
-			r3.Vector{
-				X: -980.9349365234375,
-				Y: -2327.1201171875,
-				Z: -167.96875,
-			},
 			types.PlayerTickData{
 				Position: r3.Vector{
 					X: -980.9349365234375,
@@ -167,11 +156,6 @@ func TestVerifyAxisFix(t *testing.T) {
 		},
 		{
 			"Unknown_Tick_160327",
-			r3.Vector{
-				X: -1865.9390869140625,
-				Y: -624.790283203125,
-				Z: -167.96875,
-			},
 			types.PlayerTickData{
 				Position: r3.Vector{
 					X: -1865.9390869140625,
@@ -197,11 +181,6 @@ func TestVerifyAxisFix(t *testing.T) {
 		},
 		{
 			"Unknown_Tick_94276",
-			r3.Vector{
-				X: -1865.9390869140625,
-				Y: -624.790283203125,
-				Z: -167.96875,
-			},
 			types.PlayerTickData{
 				Position: r3.Vector{
 					X: -111.48406982421875,
@@ -227,11 +206,6 @@ func TestVerifyAxisFix(t *testing.T) {
 		},
 		{
 			"Tick_109075_Window_To_Bench",
-			r3.Vector{
-				X: -1149.90234375,
-				Y: -612.816162109375,
-				Z: -167.96875,
-			},
 			types.PlayerTickData{
 				Position: r3.Vector{
 					X: -1149.90234375,
@@ -253,11 +227,6 @@ func TestVerifyAxisFix(t *testing.T) {
 		},
 		{
 			"Tick_109040_Window_To_Bench",
-			r3.Vector{
-				X: -1177.66,
-				Y: -674.00,
-				Z: -168.13,
-			},
 			types.PlayerTickData{
 				Position: r3.Vector{
 					X: -1177.66,
@@ -277,6 +246,69 @@ func TestVerifyAxisFix(t *testing.T) {
 				ViewAngleY: -3.16,
 			},
 		},
+		{
+			"Tick_165745_Unknown",
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -516.4881591796875,
+					Y: -1721.796142578125,
+					Z: -177.74822998046875,
+				},
+				ViewAngleX: 11.045379638671875,
+				ViewAngleY: 1.7543792724609375,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: 562.7240600585938,
+					Y: -1574.236328125,
+					Z: -263.96875,
+				},
+				ViewAngleX: 177.5665283203125,
+				ViewAngleY: -10.548934936523438,
+			},
+		},
+		{
+			"Tick_123516_BulletDamage_Wrong_Shooter",
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1164.585693359375,
+					Y: -355.029541015625,
+					Z: -55.96875,
+				},
+				ViewAngleX: -91.15459442138672,
+				ViewAngleY: 21.40789794921875,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -876.6902465820312,
+					Y: 94.74779510498047,
+					Z: -167.3389892578125,
+				},
+				ViewAngleX: 165.22579956054688,
+				ViewAngleY: 0.8514404296875,
+			},
+		},
+		{
+			"Tick_123516_BulletDamage_Correct_Shooter",
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1424.292236328125,
+					Y: 242.8572235107422,
+					Z: -167.96875,
+				},
+				ViewAngleX: -12.0921630859375,
+				ViewAngleY: 1.9274139404296875,
+			},
+			types.PlayerTickData{
+				Position: r3.Vector{
+					X: -876.6902465820312,
+					Y: 94.74779510498047,
+					Z: -167.3389892578125,
+				},
+				ViewAngleX: 165.22579956054688,
+				ViewAngleY: 0.8514404296875,
+			},
+		},
 	}
 
 	// Test each position
@@ -284,10 +316,10 @@ func TestVerifyAxisFix(t *testing.T) {
 		t.Run(pos.name, func(t *testing.T) {
 			// Transform position to model space
 			coords := NewDefaultSource2Coordinates() // Now using the updated transformer
-			modelPos := coords.CS2ToModelSpace(pos.pos)
+			modelPos := coords.CS2ToModelSpace(pos.shooterData.Position)
 
 			// Log original and transformed position
-			t.Logf("CS2 Position: %v", pos.pos)
+			t.Logf("CS2 Position: %v", pos.shooterData.Position)
 			t.Logf("Model Position: %v", modelPos)
 
 			// Export visualization with coordinate axes
@@ -297,9 +329,9 @@ func TestVerifyAxisFix(t *testing.T) {
 			// We test if the viewangle properties have been set as a hack for now
 			if pos.shooterData.ViewAngleX != 0 && pos.targetData.ViewAngleX != 0 {
 				DebugShooterTargetVectors(&pos.shooterData, &pos.targetData)
-				err = ExportDebugVisualization(mapModel, playerModel, pos.pos, modelPos, outputPath, &pos.shooterData, &pos.targetData)
+				err = ExportDebugVisualization(mapModel, playerModel, pos.shooterData.Position, modelPos, outputPath, &pos.shooterData, &pos.targetData)
 			} else {
-				err = ExportDebugVisualization(mapModel, playerModel, pos.pos, modelPos, outputPath)
+				err = ExportDebugVisualization(mapModel, playerModel, pos.shooterData.Position, modelPos, outputPath)
 			}
 
 			require.NoError(t, err, "Failed to export debug visualization")

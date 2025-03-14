@@ -348,6 +348,107 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			},
 			expected: true,
 		},
+		//{"time":"2025-03-12T12:35:29.7951345-07:00","level":"INFO","msg":"Skipped damage event - no visibility found","shooter":76561197991944713,"target":76561198970966860,"damageTick":165745}
+		/*
+			{
+				"time": "2025-03-12T12:35:24.2584654-07:00",
+				"level": "INFO",
+				"msg": "Recorded damage event",
+				"tick": 165745,
+				"shooterSteamID": "76561197991944713",
+				"shooterPosition": {
+					"X": -516.4881591796875,
+					"Y": -1721.796142578125,
+					"Z": -177.74822998046875
+				},
+				"shooterViewAngleX": 11.045379638671875,
+				"shooterViewAngleY": 1.7543792724609375,
+				"targetSteamID": "76561198970966860",
+				"targetPosition": {
+					"X": 562.7240600585938,
+					"Y": -1574.236328125,
+					"Z": -263.96875
+				},
+				"targetViewAngleX": 177.5665283203125,
+				"targetViewAngleY": -10.548934936523438
+			}
+		*/
+		{
+			name: "Mirage -- Tick 165745 -- A site to hidden player A main",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -516.4881591796875,
+					Y: -1721.796142578125,
+					Z: -177.74822998046875,
+				},
+				ViewAngleX: 11.045379638671875,
+				ViewAngleY: 1.7543792724609375,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: 562.7240600585938,
+					Y: -1574.236328125,
+					Z: -263.96875,
+				},
+				ViewAngleX: 177.5665283203125,
+				ViewAngleY: -10.548934936523438,
+			},
+			expected: false,
+		},
+		/*
+					{"time":"2025-03-12T14:07:41.5383067-07:00","level":"INFO","msg":"Skipped damage event - no visibility found","shooter":76561199139199601,"target":76561198237889474,"damageTick":123516}
+			{"time":"2025-03-12T14:07:41.8435284-07:00","level":"INFO","msg":"Skipped damage event - no visibility found","shooter":76561199139199601,"target":76561198237889474,"damageTick":123529}
+			{"time":"2025-03-12T14:07:42.1680284-07:00","level":"INFO","msg":"Skipped damage event - no visibility found","shooter":76561199139199601,"target":76561198237889474,"damageTick":123542}
+			{"time":"2025-03-12T14:07:42.508283-07:00","level":"INFO","msg":"Skipped damage event - no visibility found","shooter":76561199139199601,"target":76561198237889474,"damageTick":123554}
+			{"time":"2025-03-12T14:07:42.8593305-07:00","level":"INFO","msg":"Skipped damage event - no visibility found","shooter":76561199139199601,"target":76561198237889474,"damageTick":123567}
+
+			{"time":"2025-03-12T14:06:04.1746025-07:00","level":"INFO","msg":"Recorded bullet damage event","tick":123516,"shooterSteamID":"76561199139199601","shooterPosition":{"X":-1164.585693359375,"Y":-355.029541015625,"Z":-55.96875},"shooterViewAngleX":-91.15459442138672,"shooterViewAngleY":21.40789794921875,"targetSteamID":"76561198237889474","targetPosition":{"X":-876.6902465820312,"Y":94.74779510498047,"Z":-167.3389892578125},"targetViewAngleX":165.22579956054688,"targetViewAngleY":0.8514404296875,"shooterActiveWeapon.Type":405,"healthDamage":3}
+
+		*/
+		{
+			name: "Mirage -- Tick 123516 -- Bullet Damage Event -- Wrong shooter",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1164.585693359375,
+					Y: -355.029541015625,
+					Z: -55.96875,
+				},
+				ViewAngleX: -91.15459442138672,
+				ViewAngleY: 21.40789794921875,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -876.6902465820312,
+					Y: 94.74779510498047,
+					Z: -167.3389892578125,
+				},
+				ViewAngleX: 165.22579956054688,
+				ViewAngleY: 0.8514404296875,
+			},
+			expected: false,
+		},
+		{
+			name: "Mirage -- Tick 123516 -- Bullet Damage Event -- Correct shooter",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1424.292236328125,
+					Y: 242.8572235107422,
+					Z: -167.96875,
+				},
+				ViewAngleX: -12.0921630859375,
+				ViewAngleY: 1.9274139404296875,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -876.6902465820312,
+					Y: 94.74779510498047,
+					Z: -167.3389892578125,
+				},
+				ViewAngleX: 165.22579956054688,
+				ViewAngleY: 0.8514404296875,
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -373,71 +474,5 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 				t.Errorf("%s: expected %v, got %v", tt.name, tt.expected, result)
 			}
 		})
-	}
-}
-
-// Helper function to validate individual triangles
-func validateTriangle(t *testing.T, tri types.Triangle, modelType string) {
-	// Ensure coordinates are valid
-	for _, v := range []r3.Vector{tri.V1, tri.V2, tri.V3} {
-		if math.IsNaN(v.X) || math.IsNaN(v.Y) || math.IsNaN(v.Z) {
-			t.Errorf("Invalid triangle vertex in %s model: %+v", modelType, v)
-		}
-	}
-
-	// Ensure right-handed coordinate system (cross product should point correctly)
-	edge1 := tri.V2.Sub(tri.V1)
-	edge2 := tri.V3.Sub(tri.V1)
-	normal := r3.Vector{
-		X: edge1.Y*edge2.Z - edge1.Z*edge2.Y,
-		Y: edge1.Z*edge2.X - edge1.X*edge2.Z,
-		Z: edge1.X*edge2.Y - edge1.Y*edge2.X,
-	}
-	if normal.Z < 0 {
-		t.Errorf("Triangle in %s model has incorrect normal direction: %+v", modelType, normal)
-	}
-
-	// Check if Z-axis is dominant (should be "up" in Source2 coordinate system)
-	if math.Abs(normal.Z) < math.Abs(normal.Y) {
-		t.Errorf("Triangle in %s model has suspicious normal (Z component too small): %+v", modelType, normal)
-	}
-}
-
-// Helper function to check if the player model is in a reasonable location
-func validatePlayerPosition(t *testing.T, playerModel Model) {
-	var minX, minY, minZ, maxX, maxY, maxZ float64
-	minX, minY, minZ = math.MaxFloat64, math.MaxFloat64, math.MaxFloat64
-	maxX, maxY, maxZ = -math.MaxFloat64, -math.MaxFloat64, -math.MaxFloat64
-
-	for _, tri := range playerModel.triangles {
-		for _, v := range []r3.Vector{tri.V1, tri.V2, tri.V3} {
-			if v.X < minX {
-				minX = v.X
-			}
-			if v.Y < minY {
-				minY = v.Y
-			}
-			if v.Z < minZ {
-				minZ = v.Z
-			}
-			if v.X > maxX {
-				maxX = v.X
-			}
-			if v.Y > maxY {
-				maxY = v.Y
-			}
-			if v.Z > maxZ {
-				maxZ = v.Z
-			}
-		}
-	}
-
-	// Ensure the player model is within reasonable bounds
-	expectedHeight := 72.0 // Approximate CS2 player height
-	if maxZ-minZ < expectedHeight*0.8 || maxZ-minZ > expectedHeight*1.2 {
-		t.Errorf("Player model height is unexpected: %f", maxZ-minZ)
-	}
-	if maxX-minX < 10 || maxY-minY < 10 {
-		t.Errorf("Player model width/length is unexpectedly small: (%f, %f)", maxX-minX, maxY-minY)
 	}
 }

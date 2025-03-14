@@ -65,6 +65,7 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 	skippedEngagementWindow := 0
 	skippedNoVisibility := 0
 	skippedLongTTD := 0
+	skippedNonBullet := 0
 	acceptedTTD := 0
 	totalDamageEvents := 0
 
@@ -73,13 +74,26 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 		"msPerTick", msPerTick,
 		"tickTime", tickTime)
 
-	// Collect damage events
+	// Collect damage events - now filtering for bullet damage only
 	for tick, playerMap := range tickData {
 		for steamID, player := range playerMap {
 			for targetID, damage := range player.DamageDealtToPlayer {
+				// Only consider damage events with health damage > 0
 				if damage.HealthDamage > 0 {
+					totalDamageEvents++
 
-					a.logger.Debug("Recorded damage event",
+					// Skip damage that's not from bullets
+					if !damage.IsBulletDamage {
+						skippedNonBullet++
+						a.logger.Debug("Skipped damage event - not bullet damage",
+							"tick", tick,
+							"shooter", steamID,
+							"target", targetID,
+							"damage", damage.HealthDamage)
+						continue
+					}
+
+					a.logger.Info("Recorded bullet damage event",
 						"tick", tick,
 						"shooterSteamID", fmt.Sprintf("%d", steamID),
 						"shooterPosition", player.Position,
@@ -89,7 +103,8 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 						"targetPosition", playerMap[targetID].Position,
 						"targetViewAngleX", playerMap[targetID].ViewAngleX,
 						"targetViewAngleY", playerMap[targetID].ViewAngleY,
-					)
+						//"shooterActiveWeapon.Type", player.ActiveWeapon.Type,
+						"healthDamage", damage.HealthDamage)
 
 					pair := playerPair{shooter: steamID, target: targetID}
 					damagesByPair[pair] = append(damagesByPair[pair], damageEvent{
@@ -102,15 +117,16 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 					}
 					stat := stats[steamID]
 					stat.damageEvents++
-					// TODO: This is a debug hack for now
-					totalDamageEvents++
 					stats[steamID] = stat
 				}
 			}
 		}
 	}
 
-	a.logger.Info("Initial damage events collected", "totalDamageEvents", totalDamageEvents)
+	a.logger.Info("Bullet damage events collected",
+		"totalDamageEvents", totalDamageEvents,
+		"bulletDamageEvents", totalDamageEvents-skippedNonBullet,
+		"skippedNonBullet", skippedNonBullet)
 
 	// Sort pairs for deterministic processing
 	sort.Slice(allPairs, func(i, j int) bool {
@@ -155,7 +171,7 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 				// Calculate time delta in milliseconds
 				tickDelta := dmg.tick - result.StartTick
 				if tickDelta <= 0 {
-					a.logger.Warn("Invalid tick delta - damage at same tick or before visibility",
+					a.logger.Info("Invalid tick delta - damage at same tick or before visibility",
 						"shooter", pair.shooter,
 						"target", pair.target,
 						"visibilityStartTick", result.StartTick,
@@ -201,7 +217,7 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 				}
 			} else {
 				skippedNoVisibility++
-				a.logger.Debug("Skipped damage event - no visibility found",
+				a.logger.Info("Skipped damage event - no visibility found",
 					"shooter", pair.shooter,
 					"target", pair.target,
 					"damageTick", dmg.tick)
@@ -211,6 +227,8 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 
 	a.logger.Info("TTD Analysis Complete",
 		"totalDamageEvents", totalDamageEvents,
+		"bulletDamageEvents", totalDamageEvents-skippedNonBullet,
+		"skippedNonBullet", skippedNonBullet,
 		"skippedEngagementWindow", skippedEngagementWindow,
 		"skippedNoVisibility", skippedNoVisibility,
 		"skippedLongTTD", skippedLongTTD,
@@ -246,126 +264,3 @@ func (a *Analyzer) Analyze(tickData map[int]map[uint64]types.PlayerTickData, tic
 
 	return medianTimeToDamage, nil
 }
-
-/*func (a *Analyzer) GenerateDebugVisualization(
-	tick int,
-	shooterSteamID uint64,
-	targetSteamID uint64,
-	tickData map[int]map[uint64]types.PlayerTickData,
-) error {
-	// Get tick data
-	tickPlayers, exists := tickData[tick]
-	if !exists {
-		return fmt.Errorf("tick %d not found in data", tick)
-	}
-
-	// Get shooter data
-	shooter, exists := tickPlayers[shooterSteamID]
-	if !exists {
-		return fmt.Errorf("shooter %d not found at tick %d", shooterSteamID, tick)
-	}
-
-	// Get target data
-	target, exists := tickPlayers[targetSteamID]
-	if !exists {
-		return fmt.Errorf("target %d not found at tick %d", targetSteamID, tick)
-	}
-
-	if !shooter.IsAlive || !target.IsAlive {
-		return fmt.Errorf("either shooter or target is not alive at tick %d", tick)
-	}
-
-	// Get hit points and debug info by calling CanSeeTarget
-	_, hitPoints, debugInfo := visibility.CanSeeTarget(
-		shooter,
-		target,
-		a.visibility.LosSystem.PlayerModel,
-		a.visibility.LosSystem.MapModel,
-		tick,
-	)
-
-	// Log detailed debug information
-	a.logger.Info("Generating debug visualization",
-		"tick", tick,
-		"shooter", shooterSteamID,
-		"target", targetSteamID,
-		"numFOVChecks", len(debugInfo.FOVCheckResults),
-		"numRayIntersections", len(debugInfo.RayIntersections),
-		"numMarginResults", len(debugInfo.MarginResults))
-
-	// Log FOV check results
-	for i, fovResult := range debugInfo.FOVCheckResults {
-		a.logger.Info("FOV Check Result",
-			"index", i,
-			"inFOV", fovResult.InFOV,
-			"horizontalAngle", fovResult.HorizontalAngle,
-			"verticalAngle", fovResult.VerticalAngle,
-			"candidatePoint", fovResult.CandidatePoint)
-	}
-
-	// Log margin results
-	for i, marginResult := range debugInfo.MarginResults {
-		a.logger.Info("Margin Result",
-			"index", i,
-			"margin", marginResult.Margin,
-			"tolerance", marginResult.Tolerance,
-			"hitFound", marginResult.HitFound,
-			"hitDistance", marginResult.HitDistance,
-			"point", marginResult.Point)
-	}
-
-	// Create the debug visualization with all debug information
-	err := visibility.CreateShooterCentricFOVUsingTargetDistance(
-		tick,
-		a.visibility.LosSystem.MapModel,
-		a.visibility.LosSystem.PlayerModel,
-		shooter,
-		target,
-		0.0,  // no extra padding needed for debug
-		true, // include FOV cone
-		hitPoints,
-		debugInfo.RayIntersections, // Add ray intersections for visualization
-		false,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to create debug visualization: %w", err)
-	}
-
-	// Create a debug file with specific FOV check results
-	fileName := fmt.Sprintf("debug_visibility/fov_results_tick_%d.txt", tick)
-	f, err := os.Create(fileName)
-	if err != nil {
-		return fmt.Errorf("failed to create FOV results file: %w", err)
-	}
-	defer f.Close()
-
-	// Write detailed FOV and visibility information
-	fmt.Fprintf(f, "Debug Visibility Information for Tick %d\n", tick)
-	fmt.Fprintf(f, "Shooter: %d, Target: %d\n\n", shooterSteamID, targetSteamID)
-	fmt.Fprintf(f, "Shooter Position: %v\n", shooter.Position)
-	fmt.Fprintf(f, "Shooter Eye Position: %v\n", visibility.GetEyePosition(shooter, a.visibility.LosSystem.PlayerModel))
-	fmt.Fprintf(f, "Target Position: %v\n", target.Position)
-	fmt.Fprintf(f, "Shooter View Angles: (%.2f, %.2f)\n\n", shooter.ViewAngleX, shooter.ViewAngleY)
-
-	fmt.Fprintf(f, "FOV Check Results:\n")
-	for i, result := range debugInfo.FOVCheckResults {
-		fmt.Fprintf(f, "Point %d:\n", i)
-		fmt.Fprintf(f, "  Candidate Point: %v\n", result.CandidatePoint)
-		fmt.Fprintf(f, "  In FOV: %v\n", result.InFOV)
-		fmt.Fprintf(f, "  Horizontal Angle: %.2f\n", result.HorizontalAngle)
-		fmt.Fprintf(f, "  Vertical Angle: %.2f\n\n", result.VerticalAngle)
-	}
-
-	fmt.Fprintf(f, "Margin Results:\n")
-	for i, result := range debugInfo.MarginResults {
-		fmt.Fprintf(f, "Point %d:\n", i)
-		fmt.Fprintf(f, "  Point: %v\n", result.Point)
-		fmt.Fprintf(f, "  Margin: %.2f\n", result.Margin)
-		fmt.Fprintf(f, "  Tolerance: %.2f\n", result.Tolerance)
-		fmt.Fprintf(f, "  Hit Found: %v\n", result.HitFound)
-		fmt.Fprintf(f, "  Hit Distance: %.2f\n\n", result.HitDistance)
-	}
-
-	return nil
-}*/

@@ -175,6 +175,7 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 
 	for _, player := range gs.Participants().Playing() {
 		if player.SteamID64 == 0 {
+			slog.Debug("handleEntityUpdate - player.SteamID64 is 0, skipping")
 			continue
 		}
 
@@ -251,6 +252,16 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 			pTick.LastMoveDirection = pTick.Position.Sub(lastPTD.Position)
 		}
 
+		// TODO: Remove this debug hack
+		if currentTick == 123516 {
+			slog.Info("handleEntityUpdate",
+				"SteamID", pTick.SteamID,
+				"ViewAngleX", pTick.ViewAngleX,
+				"ViewAngleY", pTick.ViewAngleY,
+				"Position", pTick.Position,
+			)
+		}
+
 		c.PerTickInfo[currentTick][player.SteamID64] = pTick
 	}
 }
@@ -275,6 +286,16 @@ func (c *Collector) handleWeaponFire(e events.WeaponFire) {
 	}
 	if e.Shooter.IsAirborne() {
 		shooterData.JumpShots++
+	}
+
+	// TODO: Remove this debug hack
+	if currentTick == 123516 {
+		slog.Info("handleWeaponFire",
+			"shooterID", shooterData.SteamID,
+			"ViewAngleX", shooterData.ViewAngleX,
+			"ViewAngleY", shooterData.ViewAngleY,
+			"Position", shooterData.Position,
+		)
 	}
 
 	c.PerTickInfo[currentTick][e.Shooter.SteamID64] = shooterData
@@ -308,11 +329,46 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 	attackerID := e.Attacker.SteamID64
 	victimID := e.Player.SteamID64
 
-	if _, ok := c.PerTickInfo[currentTick][attackerID]; !ok {
+	// TODO: Remove this debug hack
+	if currentTick == 123516 {
+		slog.Info("handlePlayerHurt",
+			"attackerID", attackerID,
+			"victimID", victimID,
+			"e.Attacker.ViewDirectionX", e.Attacker.ViewDirectionX(),
+			"e.Attacker.ViewDirectionY", e.Attacker.ViewDirectionY(),
+			"e.Attacker.Position", e.Attacker.Position(),
+			"e.Player.ViewDirectionX", e.Player.ViewDirectionX(),
+			"e.Player.ViewDirectionY", e.Player.ViewDirectionY(),
+			"e.Player.Position", e.Player.Position(),
+		)
+	}
+
+	if _, ok := c.PerTickInfo[currentTick]; !ok {
 		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
 	}
+	if _, ok := c.PerTickInfo[currentTick][attackerID]; !ok {
+		c.PerTickInfo[currentTick][attackerID] = types.PlayerTickData{
+			SteamID:             attackerID,
+			DamageDealtToPlayer: make(map[uint64]types.DamageDealt),
+			ActiveGrenades:      make(map[int]*types.GrenadeData),
+			GrenadeHistory:      make([]*types.GrenadeData, 0),
+			BuyHistory:          make([]common.EquipmentType, 0),
+			SpottedBy:           make([]uint64, 0),
+			CanSee:              make([]uint64, 0),
+			SoundEvents:         make([]string, 0),
+		}
+	}
 	if _, ok := c.PerTickInfo[currentTick][victimID]; !ok {
-		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
+		c.PerTickInfo[currentTick][victimID] = types.PlayerTickData{
+			SteamID:             victimID,
+			DamageDealtToPlayer: make(map[uint64]types.DamageDealt),
+			ActiveGrenades:      make(map[int]*types.GrenadeData),
+			GrenadeHistory:      make([]*types.GrenadeData, 0),
+			BuyHistory:          make([]common.EquipmentType, 0),
+			SpottedBy:           make([]uint64, 0),
+			CanSee:              make([]uint64, 0),
+			SoundEvents:         make([]string, 0),
+		}
 	}
 
 	attackerData := c.PerTickInfo[currentTick][attackerID]
@@ -322,22 +378,22 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 		attackerData.DamageDealtToPlayer = make(map[uint64]types.DamageDealt)
 	}
 
-	dmg := types.DamageDealt{
-		ArmorDamage:  e.ArmorDamageTaken,
-		HealthDamage: e.HealthDamageTaken,
-		HitGroup:     byte(e.HitGroup),
+	// Get existing damage or create new
+	dmg, exists := attackerData.DamageDealtToPlayer[victimID]
+	if !exists {
+		dmg = types.DamageDealt{}
 	}
+
+	// Update with PlayerHurt data
+	dmg.ArmorDamage = e.ArmorDamageTaken
+	dmg.HealthDamage = e.HealthDamageTaken
+	dmg.HitGroup = byte(e.HitGroup)
+	dmg.IsBulletDamage = isBulletBasedWeapon(e.Weapon)
 
 	attackerData.DamageDealtToPlayer[victimID] = dmg
 
 	c.PerTickInfo[currentTick][attackerID] = attackerData
 	c.PerTickInfo[currentTick][victimID] = victimData
-
-	/*
-		 * hacky debug code to test a tick
-		if currentTick == 44170 {
-			slog.Debug("Suspect Tick 44170", "attackerID", attackerID, "victimID", victimID, "attackerPos", attackerData.Position, "victimPos", victimData.Position)
-		}*/
 }
 
 func (c *Collector) handleBulletDamage(e events.BulletDamage) {
@@ -349,21 +405,67 @@ func (c *Collector) handleBulletDamage(e events.BulletDamage) {
 		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
 	}
 
+	// TODO: Remove this debug hack
+	if currentTick == 123516 {
+		slog.Info("handleBulletDamage",
+			"attackerID", e.Attacker.SteamID64,
+			"victimID", e.Victim.SteamID64,
+			"e.Attacker.ViewDirectionX", e.Attacker.ViewDirectionX(),
+			"e.Attacker.ViewDirectionY", e.Attacker.ViewDirectionY(),
+			"e.Attacker.Position", e.Attacker.Position(),
+			"e.Player.ViewDirectionX", e.Attacker.ViewDirectionX(),
+			"e.Player.ViewDirectionY", e.Attacker.ViewDirectionY(),
+			"e.Player.Position", e.Attacker.Position(),
+		)
+	}
+
+	// Ensure both attacker and victim data structures exist
+	if _, ok := c.PerTickInfo[currentTick][e.Attacker.SteamID64]; !ok {
+		c.PerTickInfo[currentTick][e.Attacker.SteamID64] = types.PlayerTickData{
+			SteamID:             e.Attacker.SteamID64,
+			DamageDealtToPlayer: make(map[uint64]types.DamageDealt),
+			ActiveGrenades:      make(map[int]*types.GrenadeData),
+			GrenadeHistory:      make([]*types.GrenadeData, 0),
+			BuyHistory:          make([]common.EquipmentType, 0),
+			SpottedBy:           make([]uint64, 0),
+			CanSee:              make([]uint64, 0),
+			SoundEvents:         make([]string, 0),
+		}
+	}
+	if _, ok := c.PerTickInfo[currentTick][e.Victim.SteamID64]; !ok {
+		c.PerTickInfo[currentTick][e.Victim.SteamID64] = types.PlayerTickData{
+			SteamID:             e.Victim.SteamID64,
+			DamageDealtToPlayer: make(map[uint64]types.DamageDealt),
+			ActiveGrenades:      make(map[int]*types.GrenadeData),
+			GrenadeHistory:      make([]*types.GrenadeData, 0),
+			BuyHistory:          make([]common.EquipmentType, 0),
+			SpottedBy:           make([]uint64, 0),
+			CanSee:              make([]uint64, 0),
+			SoundEvents:         make([]string, 0),
+		}
+	}
+
 	// Update attacker data
 	attackerData := c.PerTickInfo[currentTick][e.Attacker.SteamID64]
 	victimData := c.PerTickInfo[currentTick][e.Victim.SteamID64]
 
-	damageData := types.DamageDealt{
-		Distance:        e.Distance,
-		NumPenetrations: e.NumPenetrations,
-		IsNoScope:       e.IsNoScope,
-		IsAttackerInAir: e.IsAttackerInAir,
-		DamageDirection: r3.Vector{X: float64(e.DamageDirX), Y: float64(e.DamageDirY), Z: float64(e.DamageDirZ)},
-	}
-
 	if attackerData.DamageDealtToPlayer == nil {
 		attackerData.DamageDealtToPlayer = make(map[uint64]types.DamageDealt)
 	}
+
+	// Get existing damage or create new
+	damageData, exists := attackerData.DamageDealtToPlayer[e.Victim.SteamID64]
+	if !exists {
+		damageData = types.DamageDealt{}
+	}
+
+	// Update with BulletDamage-specific data (preserve existing values)
+	damageData.Distance = e.Distance
+	damageData.NumPenetrations = e.NumPenetrations
+	damageData.IsNoScope = e.IsNoScope
+	damageData.IsAttackerInAir = e.IsAttackerInAir
+	damageData.DamageDirection = r3.Vector{X: float64(e.DamageDirX), Y: float64(e.DamageDirY), Z: float64(e.DamageDirZ)}
+	damageData.IsBulletDamage = true
 
 	// Update attacker stats
 	attackerData.BulletsFired++
@@ -1117,4 +1219,13 @@ func (c *Collector) calculateVelocity3D(currentPos, lastPos r3.Vector) float64 {
 	timeDelta := float64(c.TickTime.Milliseconds())
 	disp := currentPos.Sub(lastPos)
 	return disp.Norm() / timeDelta
+}
+
+func isBulletBasedWeapon(weapon *common.Equipment) bool {
+	if weapon == nil {
+		slog.Info("Active weapon was nil")
+		return false
+	}
+	weaponClass := weapon.Class()
+	return (weaponClass == common.EqClassPistols || weaponClass == common.EqClassRifle || weaponClass == common.EqClassSMG)
 }
