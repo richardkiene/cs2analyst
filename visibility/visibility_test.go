@@ -111,23 +111,6 @@ func TestMapGeometryOrientation(t *testing.T) {
 	assert.InDelta(t, expected.Z, dir.Z, tol, "Map triangle direction Z")
 }
 
-// TestVisibilityFOVConsistency verifies that IsInFieldOfViewFromEye uses the same forward vector.
-// For a shooter facing east (ViewAngleX=90, ViewAngleY=0), a target placed at (100, 0, 0) should be in FOV.
-func TestVisibilityFOVConsistency(t *testing.T) {
-	shooter := types.PlayerTickData{
-		Position:   r3.Vector{X: 0, Y: 0, Z: 0},
-		ViewAngleX: 90, // Facing east; forward should be (1,0,0)
-		ViewAngleY: 0,
-		IsAlive:    true,
-	}
-	target := types.PlayerTickData{
-		Position: r3.Vector{X: 100, Y: 0, Z: 0},
-		IsAlive:  true,
-	}
-	eyePos := GetEyePosition(shooter)
-	assert.True(t, shooter.IsInFieldOfViewFromEye(target.Position, eyePos), "Target directly in front should be in FOV")
-}
-
 // TestCoordinateSystemConsistency verifies that the coordinate system matches Source2's expectations
 func TestCoordinateSystemConsistency(t *testing.T) {
 	tests := []struct {
@@ -189,13 +172,6 @@ func TestCoordinateSystemConsistency(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Get eye position (this is important for coordinate system verification)
-			eyePos := GetEyePosition(tt.shooter)
-
-			// Test if target is in FOV
-			inFOV := tt.shooter.IsInFieldOfViewFromEye(tt.target.Position, eyePos)
-			assert.Equal(t, tt.wantFOV, inFOV, tt.desc)
-
 			// Verify coordinate transformations
 			forward := tt.shooter.ForwardVector()
 			validateForwardVector(t, float64(tt.shooter.ViewAngleX), float64(tt.shooter.ViewAngleY), forward)

@@ -431,12 +431,12 @@ func (m *Model) GetRelevantMapGeometry(start, end r3.Vector) []int {
 }
 
 // Fixed FindLastContinuousVisibilityStart function to properly handle continuous visibility windows
-func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData) (VisibilityResult, bool) {
+func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64, currentTick int, perTickInfo map[int]map[uint64]types.PlayerTickData, smokes []types.ActiveSmoke) (VisibilityResult, bool) {
 	const maxWindowTicks = 320
 	var allowedGap = 64 // maximum number of consecutive ticks where visibility can be missing
 
 	// Only log debug messages if the shooter matches the specified SteamID.
-	debugEnabled := playerID == 76561199002420143 && targetID == 76561198237889474
+	debugEnabled := playerID == 76561198863796909 && targetID == 76561198237889474 && currentTick == 188655
 
 	if debugEnabled {
 		slog.Info("FindLastContinuousVisibilityStart called",
@@ -486,16 +486,6 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		shooterTick, ok := playerData[playerID]
-		// If the shooter is blind, don't count it as a gap in visibility
-		if ok && shooterTick.IsBlinded {
-			if debugEnabled {
-				slog.Info("Shooter is blinded",
-					"tick", tick,
-					"flashDuration", shooterTick.FlashDuration)
-			}
-			// This isn't a valid gap since the shooter is blind
-			continue
-		}
 
 		if !ok || !shooterTick.IsAlive {
 			gapCount++
@@ -527,7 +517,23 @@ func (v *Visibility) FindLastContinuousVisibilityStart(playerID, targetID uint64
 		}
 
 		// Check if the shooter can see the target at this tick
-		canSeeTarget := IsShooterPointingAtTarget(shooterTick, targetTick, *v.LosSystem.PlayerModel, *v.LosSystem.PlayerModel, *v.LosSystem.MapModel)
+		shooterIsCurrentlyFlashed := shooterTick.IsBlinded && shooterTick.FlashDuration > 0
+		var canSeeTarget bool
+		if shooterIsCurrentlyFlashed {
+			if debugEnabled {
+				slog.Info("Skipping IsShooterPointintAtTarget due to shooter being flashed")
+			}
+			canSeeTarget = false
+		} else {
+			canSeeTarget = IsShooterPointingAtTarget(
+				shooterTick,
+				targetTick,
+				*v.LosSystem.PlayerModel,
+				*v.LosSystem.PlayerModel,
+				*v.LosSystem.MapModel,
+				smokes,
+				tick) && !(shooterTick.IsBlinded && shooterTick.FlashDuration > 0)
+		}
 
 		if debugEnabled {
 			// Use the shared utility functions for consistency

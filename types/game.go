@@ -5,6 +5,19 @@ import (
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 )
 
+type ActiveSmoke struct {
+	Position    r3.Vector
+	InnerRadius float64
+	OuterRadius float64
+	StartTick   int
+	EndTick     int
+	EntityId    int
+}
+
+func (as *ActiveSmoke) IsActiveAt(tick int) bool {
+	return tick >= as.StartTick && tick <= as.EndTick
+}
+
 type Match struct {
 	MapName     string
 	TickRate    float32

@@ -8,8 +8,9 @@ import (
 	"github.com/richardkiene/cs2analyst/types"
 )
 
-func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel) bool {
-	debugEnabled := shooter.SteamID == 76561199002420143 && target.SteamID == 76561198237889474
+func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterModel, targetModel Model, mapModel MapModel, activeSmokes []types.ActiveSmoke, currentTick int) bool {
+	// TODO: This should really be a config or env value that is passed at run time
+	debugEnabled := false //shooter.SteamID == 76561199002420143 && target.SteamID == 76561198237889474
 
 	// Use the shared eye position function
 	eyePos := GetEyePosition(shooter)
@@ -25,6 +26,24 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 			"target_position", target.Position,
 			"transformed_eye", transformedEyePos,
 			"transformed_target", transformedTargetPos)
+	}
+
+	// Check if any active smoke obstructs the line of sight
+	for _, smoke := range activeSmokes {
+		if smoke.IsActiveAt(currentTick) && isSmokeBlocking(transformedEyePos, transformedTargetPos, smoke) {
+			slog.Info("LOS Blocked by Smoke",
+				"currentTick", currentTick,
+				"smoke", smoke,
+				"shooter.SteamID", shooter.SteamID,
+				"shooter.PlayerName", shooter.PlayerName,
+				"shooter_position", shooter.Position,
+				"target.SteamID", target.SteamID,
+				"target.PlayerName", target.PlayerName,
+				"target_position", target.Position,
+				"transformed_eye", transformedEyePos,
+				"transformed_target", transformedTargetPos)
+			return false
+		}
 	}
 
 	// Get the shooter's forward vector in model space
@@ -96,6 +115,74 @@ func IsShooterPointingAtTarget(shooter, target types.PlayerTickData, shooterMode
 	// None of the sample points were visible
 	if debugEnabled {
 		slog.Info("Target is not visible - all sample points blocked")
+	}
+
+	return false
+}
+
+func isSmokeBlocking(rayOrigin, rayEnd r3.Vector, smoke types.ActiveSmoke) bool {
+	// Simple check to see if the line segment from rayOrigin to rayEnd intersects with the smoke area.
+	// This is a basic implementation and might need more sophisticated collision detection in practice.
+
+	// Check if rayOrigin or rayEnd is inside the smoke
+	if pointInCircle(rayOrigin, smoke.Position, smoke.OuterRadius) && !pointInCircle(rayOrigin, smoke.Position, smoke.InnerRadius) {
+		return true
+	}
+	if pointInCircle(rayEnd, smoke.Position, smoke.OuterRadius) && !pointInCircle(rayEnd, smoke.Position, smoke.InnerRadius) {
+		return true
+	}
+
+	// Check if the line segment intersects with the outer boundary of the smoke
+	// This is a simple approximation and may not cover all cases.
+	if segmentIntersectsCircle(rayOrigin, rayEnd, smoke.Position, smoke.OuterRadius) {
+		return true
+	}
+
+	return false
+}
+
+func pointInCircle(point, center r3.Vector, radius float64) bool {
+	distance := math.Sqrt(math.Pow(point.X-center.X, 2) + math.Pow(point.Y-center.Y, 2))
+	return distance <= radius
+}
+
+func segmentIntersectsCircle(p1, p2, center r3.Vector, radius float64) bool {
+	// Line equation: (y - y1) = m(x - x1)
+	// Circle equation: (x - h)^2 + (y - k)^2 = r^2
+	// Substitute line equation into circle equation and solve for x or y
+
+	// This is a simplified version and might not handle all edge cases.
+	// Consider using a library for more robust geometry calculations.
+
+	// Calculate the direction vector of the segment
+	dx := p2.X - p1.X
+	dy := p2.Y - p1.Y
+
+	// Calculate the vector from the circle's center to the start of the line segment
+	fx := p1.X - center.X
+	fy := p1.Y - center.Y
+
+	// Calculate the coefficients for the quadratic equation
+	a := dx*dx + dy*dy
+	b := 2 * (fx*dx + fy*dy)
+	c := fx*fx + fy*fy - radius*radius
+
+	// Solve the quadratic equation using the quadratic formula
+	discriminant := b*b - 4*a*c
+
+	if discriminant < 0 {
+		return false // No intersection
+	}
+
+	t1 := (-b - math.Sqrt(discriminant)) / (2 * a)
+	t2 := (-b + math.Sqrt(discriminant)) / (2 * a)
+
+	// Check if the intersection points are within the line segment
+	if t1 >= 0 && t1 <= 1 {
+		return true
+	}
+	if t2 >= 0 && t2 <= 1 {
+		return true
 	}
 
 	return false

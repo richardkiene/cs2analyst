@@ -48,13 +48,13 @@ func GenerateTargetSamplePoints(targetPos r3.Vector, forward r3.Vector) []r3.Vec
 		targetPos,
 
 		// Head points - more detailed coverage
-		targetPos.Add(up.Mul(playerHeight * 0.85)),                     // Top of head
-		targetPos.Add(up.Mul(playerHeight * 0.80)),                     // Upper head
-		targetPos.Add(up.Mul(playerHeight * 0.75)),                     // Mid head
-		targetPos.Add(up.Mul(playerHeight * 0.80)).Add(right.Mul(5)),   // Right side of head
-		targetPos.Add(up.Mul(playerHeight * 0.80)).Sub(right.Mul(5)),   // Left side of head
-		targetPos.Add(up.Mul(playerHeight * 0.80)).Add(forward.Mul(5)), // Front of head
-		targetPos.Add(up.Mul(playerHeight * 0.80)).Sub(forward.Mul(5)), // Back of head
+		targetPos.Add(up.Mul(playerHeight)),                            // Top of head
+		targetPos.Add(up.Mul(playerHeight * 0.95)),                     // Upper head
+		targetPos.Add(up.Mul(playerHeight * 0.90)),                     // Eye level
+		targetPos.Add(up.Mul(playerHeight * 0.90)).Add(right.Mul(5)),   // Right side of head
+		targetPos.Add(up.Mul(playerHeight * 0.90)).Sub(right.Mul(5)),   // Left side of head
+		targetPos.Add(up.Mul(playerHeight * 0.90)).Add(forward.Mul(5)), // Front of head
+		targetPos.Add(up.Mul(playerHeight * 0.90)).Sub(forward.Mul(5)), // Back of head
 
 		// Neck area
 		targetPos.Add(up.Mul(playerHeight * 0.70)),
@@ -133,10 +133,10 @@ func GenerateTargetSamplePoints(targetPos r3.Vector, forward r3.Vector) []r3.Vec
 		targetPos.Add(up.Mul(playerHeight * 0.45)).Sub(right.Mul(playerWidth * 0.3)).Sub(forward.Mul(playerWidth * 0.3)), // Back-left
 
 		// Head level diagonals
-		targetPos.Add(up.Mul(playerHeight * 0.8)).Add(right.Mul(4)).Add(forward.Mul(4)), // Front-right of head
-		targetPos.Add(up.Mul(playerHeight * 0.8)).Add(right.Mul(4)).Sub(forward.Mul(4)), // Back-right of head
-		targetPos.Add(up.Mul(playerHeight * 0.8)).Sub(right.Mul(4)).Add(forward.Mul(4)), // Front-left of head
-		targetPos.Add(up.Mul(playerHeight * 0.8)).Sub(right.Mul(4)).Sub(forward.Mul(4)), // Back-left of head
+		targetPos.Add(up.Mul(playerHeight * 0.9)).Add(right.Mul(4)).Add(forward.Mul(4)), // Front-right of head
+		targetPos.Add(up.Mul(playerHeight * 0.9)).Add(right.Mul(4)).Sub(forward.Mul(4)), // Back-right of head
+		targetPos.Add(up.Mul(playerHeight * 0.9)).Sub(right.Mul(4)).Add(forward.Mul(4)), // Front-left of head
+		targetPos.Add(up.Mul(playerHeight * 0.9)).Sub(right.Mul(4)).Sub(forward.Mul(4)), // Back-left of head
 	}
 
 	return points

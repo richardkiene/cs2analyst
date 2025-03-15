@@ -26,6 +26,7 @@ type Collector struct {
 	Logger        slog.Logger
 	PerTickInfo   map[int]map[uint64]types.PlayerTickData
 	WeaponDetails map[common.EquipmentType]weapons.WeaponDetail
+	ActiveSmokes  []types.ActiveSmoke
 }
 
 func New() *Collector {
@@ -98,6 +99,9 @@ func (c *Collector) registerEventHandlers() {
 	// Network and entity handlers
 	c.parser.RegisterNetMessageHandler(c.handleServerInfo)
 	c.parser.RegisterNetMessageHandler(c.handleEntityUpdate)
+
+	// Generic events (all)
+	c.parser.RegisterEventHandler(c.handleGenericGameEvent)
 
 	// Combat events
 	c.parser.RegisterEventHandler(c.handleWeaponFire)
@@ -266,6 +270,28 @@ func (c *Collector) handleEntityUpdate(msg *msgs2.CSVCMsg_PacketEntities) {
 	}
 }
 
+func iteratePlayers(playersByUserID map[int]*common.Player) {
+	for userID, player := range playersByUserID {
+		slog.Info("iteratePlayers",
+			"userID", userID,
+			"player.Name", player.Name,
+		)
+	}
+}
+
+func (c *Collector) handleGenericGameEvent(event events.GenericGameEvent) {
+	currentTick := c.parser.GameState().IngameTick()
+	if currentTick == 123516 {
+		slog.Info("handleGenericGameEvent",
+			"currentTick", currentTick,
+			"event.Name", event.Name,
+			"event.Data", event.Data,
+		)
+
+		iteratePlayers(c.parser.GameState().Participants().AllByUserID())
+	}
+}
+
 // Combat event handlers
 func (c *Collector) handleWeaponFire(e events.WeaponFire) {
 	if e.Shooter == nil {
@@ -291,6 +317,7 @@ func (c *Collector) handleWeaponFire(e events.WeaponFire) {
 	// TODO: Remove this debug hack
 	if currentTick == 123516 {
 		slog.Info("handleWeaponFire",
+			"currentTick", currentTick,
 			"shooterID", shooterData.SteamID,
 			"ViewAngleX", shooterData.ViewAngleX,
 			"ViewAngleY", shooterData.ViewAngleY,
@@ -332,8 +359,11 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 	// TODO: Remove this debug hack
 	if currentTick == 123516 {
 		slog.Info("handlePlayerHurt",
+			"currentTick", currentTick,
 			"attackerID", attackerID,
+			"e.Attacker.Name", e.Attacker.Name,
 			"victimID", victimID,
+			"e.Player.Name", e.Player.Name,
 			"e.Attacker.ViewDirectionX", e.Attacker.ViewDirectionX(),
 			"e.Attacker.ViewDirectionY", e.Attacker.ViewDirectionY(),
 			"e.Attacker.Position", e.Attacker.Position(),
@@ -390,6 +420,14 @@ func (c *Collector) handlePlayerHurt(e events.PlayerHurt) {
 	dmg.HitGroup = byte(e.HitGroup)
 	dmg.IsBulletDamage = isBulletBasedWeapon(e.Weapon)
 
+	// TODO: Remove this debug hack
+	if currentTick == 123516 {
+		slog.Info("handlePlayerHurt -- damageDealt populated",
+			"currentTick", currentTick,
+			"dmg", dmg,
+		)
+	}
+
 	attackerData.DamageDealtToPlayer[victimID] = dmg
 
 	c.PerTickInfo[currentTick][attackerID] = attackerData
@@ -409,13 +447,15 @@ func (c *Collector) handleBulletDamage(e events.BulletDamage) {
 	if currentTick == 123516 {
 		slog.Info("handleBulletDamage",
 			"attackerID", e.Attacker.SteamID64,
+			"e.Attacker.Name", e.Attacker.Name,
 			"victimID", e.Victim.SteamID64,
+			"e.Victim.Name", e.Victim.Name,
 			"e.Attacker.ViewDirectionX", e.Attacker.ViewDirectionX(),
 			"e.Attacker.ViewDirectionY", e.Attacker.ViewDirectionY(),
 			"e.Attacker.Position", e.Attacker.Position(),
-			"e.Player.ViewDirectionX", e.Attacker.ViewDirectionX(),
-			"e.Player.ViewDirectionY", e.Attacker.ViewDirectionY(),
-			"e.Player.Position", e.Attacker.Position(),
+			"e.Victim.ViewDirectionX", e.Victim.ViewDirectionX(),
+			"e.Victim.ViewDirectionY", e.Victim.ViewDirectionY(),
+			"e.Victim.Position", e.Victim.Position(),
 		)
 	}
 
@@ -755,15 +795,31 @@ func (c *Collector) handleSmokeStart(e events.SmokeStart) {
 		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
 	}
 
+	activeSmoke := types.ActiveSmoke{
+		EntityId:    e.GrenadeEntityID,
+		Position:    e.Position,
+		InnerRadius: 64.0,  // Full smoke effect radius
+		OuterRadius: 128.0, // Partial smoke effect radius
+		StartTick:   currentTick,
+		EndTick:     currentTick + int(c.TickRate*20), // Add 20 seconds as a default
+	}
+	slog.Info("Active Smoke",
+		"activeSmoke", activeSmoke,
+		"currentTick", currentTick,
+		"e.Thrower.Name", e.Thrower.Name,
+		"e.Thrower.SteamID", e.Thrower.SteamID64,
+	)
+
+	c.ActiveSmokes = append(c.ActiveSmokes, activeSmoke)
+
 	if e.Thrower != nil {
 		playerData := c.PerTickInfo[currentTick][e.Thrower.SteamID64]
 		if grenadeData, ok := playerData.ActiveGrenades[e.GrenadeEntityID]; ok {
 			grenadeData.DetonatePosition = e.Position
 			grenadeData.DetonateTick = currentTick
 
-			// TODO: These should be calculated or pulled from a known source
-			grenadeData.InnerRadius = 150.0 // Full smoke effect
-			grenadeData.OuterRadius = 250.0 // Partial smoke effect
+			grenadeData.InnerRadius = 64.0  // Full smoke effect
+			grenadeData.OuterRadius = 128.0 // Partial smoke effect
 
 			// Add to history and remove from active
 			playerData.GrenadeHistory = append(playerData.GrenadeHistory, grenadeData)
@@ -792,6 +848,14 @@ func (c *Collector) handleSmokeExpired(e events.SmokeExpired) {
 	currentTick := c.parser.GameState().IngameTick()
 	if _, ok := c.PerTickInfo[currentTick]; !ok {
 		c.PerTickInfo[currentTick] = make(map[uint64]types.PlayerTickData)
+	}
+
+	// Update the endTick to whatever the game says instead of the default set in handleSmokeStart
+	smokeToExpire, idx := c.getActiveSmoke(e.GrenadeEntityID)
+	if smokeToExpire != nil {
+		slog.Info("Expiring Smoke", "smokeToExpire", smokeToExpire, "currentTick", currentTick)
+		smokeToExpire.EndTick = min(smokeToExpire.EndTick, currentTick) // Sometimes this isn't called until essentially the end of the match
+		c.ActiveSmokes[idx] = *smokeToExpire
 	}
 
 	// Update smoke state for all players
@@ -1219,6 +1283,15 @@ func (c *Collector) calculateVelocity3D(currentPos, lastPos r3.Vector) float64 {
 	timeDelta := float64(c.TickTime.Milliseconds())
 	disp := currentPos.Sub(lastPos)
 	return disp.Norm() / timeDelta
+}
+
+func (c *Collector) getActiveSmoke(entityID int) (*types.ActiveSmoke, int) {
+	for i, as := range c.ActiveSmokes {
+		if as.EntityId == entityID {
+			return &as, i
+		}
+	}
+	return nil, -1
 }
 
 func isBulletBasedWeapon(weapon *common.Equipment) bool {

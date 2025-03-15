@@ -9,6 +9,12 @@ import (
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 )
 
+type TimeToDamageResult struct {
+	TimeDelta  float64
+	SteamID    uint64
+	PlayerName string
+}
+
 type DamageDealt struct {
 	ArmorDamage     int
 	HealthDamage    int
@@ -177,28 +183,6 @@ func degToRad(deg float64) float64 {
 	return deg * math.Pi / 180.0
 }
 
-// ForwardVector returns the forward direction in Source2 space.
-// In Source2:
-//   - X is forward (east)
-//   - Y is left (north)
-//   - Z is up
-//
-// And view angles are defined so that:
-//   - ViewAngleX = 0° means facing north (+Y)
-//   - ViewAngleX = 90° means facing east (+X)
-//   - ViewAngleY = -90° means looking straight up (+Z)
-//   - ViewAngleY = 90° means looking straight down (-Z)
-/*func (p *PlayerTickData) ForwardVector() r3.Vector {
-	yawRad := degToRad(float64(p.ViewAngleX))
-	pitchRad := degToRad(float64(p.ViewAngleY))
-	return r3.Vector{
-		// When yaw = 0, sin(0)=0 so X = 0; cos(0)=1 so Y = 1.
-		X: math.Sin(yawRad) * math.Cos(pitchRad), // East component
-		Y: math.Cos(yawRad) * math.Cos(pitchRad), // North component
-		Z: -math.Sin(pitchRad),                   // Up/Down component
-	}.Normalize()
-}*/
-
 func (p *PlayerTickData) ForwardVector() r3.Vector {
 	// Convert angles to radians
 	pitchRad := degToRad(float64(p.ViewAngleY)) // This is X in the code (pitch)
@@ -210,89 +194,6 @@ func (p *PlayerTickData) ForwardVector() r3.Vector {
 		Y: math.Cos(pitchRad) * math.Sin(yawRad),
 		Z: -math.Sin(pitchRad),
 	}.Normalize()
-}
-
-// IsInFieldOfViewFromEye returns whether 'target' is within CS2's actual FOV from eye position
-func (p *PlayerTickData) IsInFieldOfViewFromEye(target, eyePos r3.Vector) bool {
-	const (
-		HORIZONTAL_FOV = 90.0
-		VERTICAL_FOV   = 74.0
-	)
-
-	toTarget := target.Sub(eyePos).Normalize()
-	forward := p.ForwardVector()
-
-	// For nearly vertical views (looking straight up/down), we primarily care about the vertical angle
-	pitch := float64(p.ViewAngleY)
-	if pitch > 180 {
-		pitch -= 360
-	}
-
-	// If we're looking nearly straight up/down (within 5 degrees of vertical)
-	if math.Abs(pitch) > 85 {
-		// Calculate angle between forward vector and target vector
-		dot := forward.Dot(toTarget)
-		if dot > 1.0 {
-			dot = 1.0
-		} else if dot < -1.0 {
-			dot = -1.0
-		}
-		angle := math.Acos(dot) * (180 / math.Pi)
-		return angle <= (VERTICAL_FOV / 2)
-	}
-
-	// For non-vertical views, continue with normal horizontal and vertical FOV checks
-	// Calculate horizontal angle using X-Y plane
-	forwardHorizontal := r3.Vector{
-		X: forward.X,
-		Y: forward.Y,
-		Z: 0,
-	}.Normalize()
-
-	toTargetHorizontal := r3.Vector{
-		X: toTarget.X,
-		Y: toTarget.Y,
-		Z: 0,
-	}.Normalize()
-
-	horizontalDot := forwardHorizontal.Dot(toTargetHorizontal)
-	if horizontalDot > 1.0 {
-		horizontalDot = 1.0
-	} else if horizontalDot < -1.0 {
-		horizontalDot = -1.0
-	}
-	horizontalAngle := math.Acos(horizontalDot) * (180 / math.Pi)
-
-	// Calculate vertical angle
-	right := forward.Cross(r3.Vector{X: 0, Y: 0, Z: 1}).Normalize()
-	projectedToTarget := toTarget.Sub(right.Mul(toTarget.Dot(right))).Normalize()
-
-	verticalDot := forward.Dot(projectedToTarget)
-	if verticalDot > 1.0 {
-		verticalDot = 1.0
-	} else if verticalDot < -1.0 {
-		verticalDot = -1.0
-	}
-	verticalAngle := math.Acos(verticalDot) * (180 / math.Pi)
-
-	return horizontalAngle <= (HORIZONTAL_FOV/2) && verticalAngle <= (VERTICAL_FOV/2)
-}
-
-func (p *PlayerTickData) IsPartiallyVisible(target, eyePos r3.Vector, slackDegrees float64) bool {
-	// Our base FOV remains the same (e.g., 120°)
-	const baseFOV = 120.0
-	// Effective half FOV plus extra slack
-	effectiveThreshold := (baseFOV / 2.0) + slackDegrees
-
-	// Compute the vector from the shooter’s position to the target.
-	// (If you want to use eye position instead, replace p.Position with the computed eyePos.)
-	toTarget := target.Sub(eyePos).Normalize()
-	forward := p.ForwardVector()
-
-	dot := forward.Dot(toTarget)
-	angleDegrees := math.Acos(dot) * (180 / math.Pi)
-
-	return angleDegrees <= effectiveThreshold
 }
 
 func (p PlayerTickData) String() string {

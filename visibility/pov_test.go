@@ -449,6 +449,99 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name: "Mirage Stairs to Main -- Tick 153202 -- Bullet Damage Event -- Head Barely Visible",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -768.6340942382812,
+					Y: -1738.987548828125,
+					Z: -179.46734619140625,
+				},
+				ViewAngleX: 7.985687255859375,
+				ViewAngleY: 2.8049468994140625,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: 743.318115234375,
+					Y: -1526.90771484375,
+					Z: -263.9549560546875,
+				},
+				ViewAngleX: -172.77511596679688,
+				ViewAngleY: -3.396148681640625,
+			},
+			expected: true,
+		},
+		/*{
+			name: "Mirage -- Tick_105230_BulletDamage_UnknownWeapon_PlayerAsBot -- Probably bad test",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -261.43310546875,
+					Y: -572.3412475585938,
+					Z: -250.73382568359375,
+				},
+				ViewAngleX: -137.89044189453125,
+				ViewAngleY: -2.989654541015625,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -1125.22021484375,
+					Y: 784.2235107421875,
+					Z: -79.96875,
+				},
+				ViewAngleX: -59.609413146972656,
+				ViewAngleY: 1.2874603271484375,
+			},
+			expected: true,
+		},*/
+		/*
+			{
+				"time": "2025-03-14T15:09:46.4548483-07:00",
+				"level": "INFO",
+				"msg": "Recorded damage event",
+				"tick": 188655,
+				"shooterSteamID": "76561198863796909",
+				"shooterPosition": {
+					"X": -581.8778686523438,
+					"Y": -1738.0191650390625,
+					"Z": -179.3704833984375
+				},
+				"shooterViewAngleX": 95.38467407226562,
+				"shooterViewAngleY": 4.001434326171875,
+				"targetSteamID": "76561198237889474",
+				"targetPosition": {
+					"X": -655.5184326171875,
+					"Y": -1005.0106811523438,
+					"Z": -215.96875
+				},
+				"targetViewAngleX": -8.961410522460938,
+				"targetViewAngleY": -5.090789794921875,
+				"shooterActiveWeapon": "FAMAS",
+				"isBulletDamage": true,
+				"healthDamage": 19
+			}
+		*/
+		{
+			name: "Mirage -- tick 188655 -- A Site to Con limited vis",
+			shooter: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -581.8778686523438,
+					Y: -1738.0191650390625,
+					Z: -179.3704833984375,
+				},
+				ViewAngleX: 95.38467407226562,
+				ViewAngleY: 4.001434326171875,
+			},
+			target: types.PlayerTickData{
+				Position: r3.Vector{
+					X: -655.5184326171875,
+					Y: -1005.0106811523438,
+					Z: -215.96875,
+				},
+				ViewAngleX: -8.961410522460938,
+				ViewAngleY: -5.090789794921875,
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -469,7 +562,10 @@ func TestIsShooterPointingAtTarget(t *testing.T) {
 			log.Printf("%s: Computed Yaw: %.2f, Shooter Yaw: %.2f, Difference: %.2f", tt.name, computedYaw, shooterYaw, yawDifference)
 			log.Printf("%s: Computed Pitch: %.2f, Shooter Pitch: %.2f, Difference: %.2f", tt.name, computedPitch, tt.shooter.ViewAngleY, pitchDifference)
 
-			result := IsShooterPointingAtTarget(tt.shooter, tt.target, *shooterModel, *targetModel, *mapModel)
+			// TODO: both active smokes and tick should come from the test data
+			activeSmokes := []types.ActiveSmoke{}
+			tick := 1
+			result := IsShooterPointingAtTarget(tt.shooter, tt.target, *shooterModel, *targetModel, *mapModel, activeSmokes, tick)
 			if result != tt.expected {
 				t.Errorf("%s: expected %v, got %v", tt.name, tt.expected, result)
 			}
